@@ -1,0 +1,2088 @@
+openapi: 3.0.3
+info:
+  title: Load Balancing as a Service (LBaaS) API
+  description: |
+    API for managing load balancing services across multiple vendors (F5 BIG-IP via AS3, AVI Networks, and NGINX).
+    Provides VIP management, entitlement verification, and vendor-agnostic configuration.
+  version: 1.0.0
+  contact:
+    name: LBaaS Team
+    email: lbaas-support@example.com
+servers:
+  - url: https://lbaas.example.com/api/v1
+    description: Production server
+  - url: https://lbaas-dev.example.com/api/v1
+    description: Development server
+security:
+  - basicAuth: []
+
+tags:
+  - name: VIP Management
+    description: Operations for managing Virtual IPs
+  - name: Entitlement
+    description: Operations for verifying entitlements
+  - name: Change Management
+    description: Operations for managing change requests
+  - name: Environment Promotion
+    description: Operations for promoting configurations between environments
+  - name: Transformer
+    description: Operations for transforming configurations for different vendors
+  - name: IPAM/DNS
+    description: Operations for IP address and DNS management
+  - name: Certificate
+    description: Operations for certificate management
+  - name: Monitoring
+    description: Operations for monitoring and health checks
+
+paths:
+  /vips:
+    post:
+      summary: Create a new VIP
+      description: Creates a new Virtual IP with the specified configuration
+      operationId: createVip
+      tags:
+        - VIP Management
+      parameters:
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipCreate'
+      responses:
+        '201':
+          description: VIP created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List all VIPs
+      description: Returns a list of all VIPs the user has access to
+      operationId: listVips
+      tags:
+        - VIP Management
+      parameters:
+        - name: app_id
+          in: query
+          description: Filter by application ID
+          schema:
+            type: string
+        - name: environment
+          in: query
+          description: Filter by environment
+          schema:
+            type: string
+            enum: [DEV, UAT, PROD]
+        - name: datacenter
+          in: query
+          description: Filter by datacenter
+          schema:
+            type: string
+            enum: [LADC, NYDC, EUDC, APDC]
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of VIPs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    description: Total number of VIPs
+                  page:
+                    type: integer
+                    description: Current page number
+                  limit:
+                    type: integer
+                    description: Number of items per page
+                  vips:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VipSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /vips/{vip_id}:
+    get:
+      summary: Get a specific VIP
+      description: Returns details for a specific VIP
+      operationId: getVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: VIP details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      summary: Update a VIP
+      description: Updates an existing VIP configuration
+      operationId: updateVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipUpdate'
+      responses:
+        '200':
+          description: VIP updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete a VIP
+      description: Deletes an existing VIP
+      operationId: deleteVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      responses:
+        '204':
+          description: VIP deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /vips/{vip_id}/status:
+    get:
+      summary: Get VIP status
+      description: Returns the current status of a VIP
+      operationId: getVipStatus
+      tags:
+        - VIP Management
+        - Monitoring
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: VIP status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /entitlements/verify:
+    post:
+      summary: Verify entitlements
+      description: Verifies if a user has entitlements for specified servers
+      operationId: verifyEntitlements
+      tags:
+        - Entitlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntitlementVerificationRequest'
+      responses:
+        '200':
+          description: Entitlement verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementVerificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /entitlements/app/{app_id}:
+    get:
+      summary: Get entitlements for an application
+      description: Returns all entitlements for a specific application
+      operationId: getAppEntitlements
+      tags:
+        - Entitlement
+      parameters:
+        - name: app_id
+          in: path
+          required: true
+          description: Application identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Application entitlements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app_id:
+                    type: string
+                    description: Application identifier
+                  entitlements:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntitlementRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /entitlements/user/{user_id}:
+    get:
+      summary: Get entitlements for a user
+      description: Returns all entitlements for a specific user
+      operationId: getUserEntitlements
+      tags:
+        - Entitlement
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User entitlements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    description: User identifier
+                  entitlements:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntitlementRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /changes/verify:
+    post:
+      summary: Verify a change number
+      description: Verifies if a change number is valid and approved
+      operationId: verifyChange
+      tags:
+        - Change Management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - change_number
+              properties:
+                change_number:
+                  type: string
+                  description: ServiceNow change number
+                  example: CHG0012345
+      responses:
+        '200':
+          description: Change verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeVerificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /changes/{change_number}:
+    get:
+      summary: Get change details
+      description: Returns details for a specific change number
+      operationId: getChangeDetails
+      tags:
+        - Change Management
+      parameters:
+        - name: change_number
+          in: path
+          required: true
+          description: ServiceNow change number
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Change details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /changes/{change_number}/status:
+    put:
+      summary: Update change status
+      description: Updates the status of a change request
+      operationId: updateChangeStatus
+      tags:
+        - Change Management
+      parameters:
+        - name: change_number
+          in: path
+          required: true
+          description: ServiceNow change number
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  description: New status for the change
+                  enum: [approved, rejected, completed, failed]
+                comments:
+                  type: string
+                  description: Comments about the status update
+      responses:
+        '200':
+          description: Change status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /promotion/{vip_id}/{target_env}:
+    post:
+      summary: Promote VIP to target environment
+      description: Promotes a VIP configuration to a target environment
+      operationId: promoteVip
+      tags:
+        - Environment Promotion
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+        - name: target_env
+          in: path
+          required: true
+          description: Target environment
+          schema:
+            type: string
+            enum: [DEV, UAT, PROD]
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                override_params:
+                  type: object
+                  description: Parameters to override in the target environment
+      responses:
+        '200':
+          description: VIP promoted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /promotion/history/{vip_id}:
+    get:
+      summary: Get promotion history
+      description: Returns the promotion history for a VIP
+      operationId: getPromotionHistory
+      tags:
+        - Environment Promotion
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Promotion history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vip_id:
+                    type: string
+                    description: VIP identifier
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PromotionRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /transformers:
+    get:
+      summary: List available transformers
+      description: Returns a list of available transformers
+      operationId: listTransformers
+      tags:
+        - Transformer
+      responses:
+        '200':
+          description: List of transformers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransformerInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /transformers/{vendor}:
+    get:
+      summary: Get transformer details
+      description: Returns details for a specific transformer
+      operationId: getTransformerDetails
+      tags:
+        - Transformer
+      parameters:
+        - name: vendor
+          in: path
+          required: true
+          description: Vendor name
+          schema:
+            type: string
+            enum: [f5, avi, nginx]
+      responses:
+        '200':
+          description: Transformer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransformerInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /transformers/{vendor}/transform:
+    post:
+      summary: Transform configuration
+      description: Transforms a VIP configuration for a specific vendor
+      operationId: transformConfiguration
+      tags:
+        - Transformer
+      parameters:
+        - name: vendor
+          in: path
+          required: true
+          description: Vendor name
+          schema:
+            type: string
+            enum: [f5, avi, nginx]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - vip_id
+              properties:
+                vip_id:
+                  type: string
+                  description: VIP identifier
+      responses:
+        '200':
+          description: Transformed configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransformerOutput'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /ipam/allocate:
+    post:
+      summary: Allocate IP address
+      description: Allocates an IP address from Bluecat IPAM
+      operationId: allocateIp
+      tags:
+        - IPAM/DNS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - datacenter
+                - environment
+              properties:
+                datacenter:
+                  type: string
+                  description: Datacenter
+                  enum: [LADC, NYDC, EUDC, APDC]
+                environment:
+                  type: string
+                  description: Environment
+                  enum: [DEV, UAT, PROD]
+                subnet:
+                  type: string
+                  description: Specific subnet (optional)
+      responses:
+        '200':
+          description: IP address allocated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ip_address:
+                    type: string
+                    description: Allocated IP address
+                    format: ipv4
+                  subnet:
+                    type: string
+                    description: Subnet
+                  gateway:
+                    type: string
+                    description: Gateway
+                    format: ipv4
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /ipam/release/{ip_address}:
+    delete:
+      summary: Release IP address
+      description: Releases an allocated IP address back to Bluecat IPAM
+      operationId: releaseIp
+      tags:
+        - IPAM/DNS
+      parameters:
+        - name: ip_address
+          in: path
+          required: true
+          description: IP address to release
+          schema:
+            type: string
+            format: ipv4
+      responses:
+        '204':
+          description: IP address released successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /dns/record:
+    post:
+      summary: Create DNS record
+      description: Creates a DNS record in Bluecat DNS
+      operationId: createDnsRecord
+      tags:
+        - IPAM/DNS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DnsRecordCreate'
+      responses:
+        '201':
+          description: DNS record created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DnsRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /dns/record/{fqdn}:
+    delete:
+      summary: Delete DNS record
+      description: Deletes a DNS record from Bluecat DNS
+      operationId: deleteDnsRecord
+      tags:
+        - IPAM/DNS
+      parameters:
+        - name: fqdn
+          in: path
+          required: true
+          description: Fully qualified domain name
+          schema:
+            type: string
+        - name: record_type
+          in: query
+          description: DNS record type
+          schema:
+            type: string
+            enum: [A, CNAME, PTR]
+            default: A
+      responses:
+        '204':
+          description: DNS record deleted successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /certificates:
+    post:
+      summary: Create/upload certificate
+      description: Creates or uploads a certificate
+      operationId: createCertificate
+      tags:
+        - Certificate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CertificateCreate'
+      responses:
+        '201':
+          description: Certificate created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Certificate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List certificates
+      description: Returns a list of all certificates
+      operationId: listCertificates
+      tags:
+        - Certificate
+      parameters:
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of certificates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    description: Total number of certificates
+                  page:
+                    type: integer
+                    description: Current page number
+                  limit:
+                    type: integer
+                    description: Number of items per page
+                  certificates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Certificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /certificates/{cert_id}:
+    get:
+      summary: Get certificate
+      description: Returns details for a specific certificate
+      operationId: getCertificate
+      tags:
+        - Certificate
+      parameters:
+        - name: cert_id
+          in: path
+          required: true
+          description: Certificate identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Certificate details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Certificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete certificate
+      description: Deletes a certificate
+      operationId: deleteCertificate
+      tags:
+        - Certificate
+      parameters:
+        - name: cert_id
+          in: path
+          required: true
+          description: Certificate identifier
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Certificate deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /health:
+    get:
+      summary: Get system health
+      description: Returns the health status of the LBaaS system
+      operationId: getHealth
+      tags:
+        - Monitoring
+      responses:
+        '200':
+          description: System health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /metrics:
+    get:
+      summary: Get system metrics
+      description: Returns metrics for the LBaaS system
+      operationId: getMetrics
+      tags:
+        - Monitoring
+      responses:
+        '200':
+          description: System metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemMetrics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /pools/{pool_id}/status:
+    get:
+      summary: Get pool status
+      description: Returns the current status of a pool
+      operationId: getPoolStatus
+      tags:
+        - Monitoring
+      parameters:
+        - name: pool_id
+          in: path
+          required: true
+          description: Pool identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pool status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  parameters:
+    ChangeNumberHeader:
+      name: X-Change-Number
+      in: header
+      required: true
+      description: ServiceNow change number
+      schema:
+        type: string
+        example: CHG0012345
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    VipCreate:
+      type: object
+      required:
+        - vip_fqdn
+        - app_id
+        - environment
+        - datacenter
+        - primary_contact_email
+        - monitor
+        - pool
+        - port
+        - protocol
+      properties:
+        vip_fqdn:
+          type: string
+          description: Fully Qualified Domain Name of the VIP
+          example: app.example.com
+        vip_ip:
+          type: string
+          description: IP address of the VIP (can be auto-assigned)
+          example: 10.0.1.10
+        app_id:
+          type: string
+          description: Application identifier
+          example: APP001
+        environment:
+          type: string
+          description: Deployment environment
+          enum: [DEV, UAT, PROD]
+          example: PROD
+        datacenter:
+          type: string
+          description: Datacenter where the VIP is provisioned
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        primary_contact_email:
+          type: string
+          format: email
+          description: Primary contact email
+          example: admin@example.com
+        secondary_contact_email:
+          type: string
+          format: email
+          description: Secondary contact email
+          example: backup@example.com
+        team_distribution_email:
+          type: string
+          format: email
+          description: Team distribution email
+          example: team@example.com
+        monitor:
+          $ref: '#/components/schemas/Monitor'
+        persistence:
+          $ref: '#/components/schemas/Persistence'
+        ssl_cert_name:
+          type: string
+          description: SSL certificate name/reference
+          example: app_example_com
+        mtls_ca_cert_name:
+          type: string
+          description: mTLS CA certificate name/reference
+          example: ca_example_com
+        pool:
+          type: array
+          description: List of backend servers in the pool
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/PoolMember'
+        port:
+          type: integer
+          description: Listening port for the VIP
+          example: 443
+        protocol:
+          type: string
+          description: Protocol for the VIP
+          enum: [TCP, UDP, HTTP, HTTPS]
+          example: HTTPS
+        lb_method:
+          type: string
+          description: Load balancing method
+          enum: [ROUND_ROBIN, LEAST_CONNECTIONS, PRIORITY_GROUP]
+          default: ROUND_ROBIN
+          example: ROUND_ROBIN
+
+    VipUpdate:
+      type: object
+      properties:
+        vip_fqdn:
+          type: string
+          description: Fully Qualified Domain Name of the VIP
+          example: app.example.com
+        primary_contact_email:
+          type: string
+          format: email
+          description: Primary contact email
+          example: admin@example.com
+        secondary_contact_email:
+          type: string
+          format: email
+          description: Secondary contact email
+          example: backup@example.com
+        team_distribution_email:
+          type: string
+          format: email
+          description: Team distribution email
+          example: team@example.com
+        monitor:
+          $ref: '#/components/schemas/Monitor'
+        persistence:
+          $ref: '#/components/schemas/Persistence'
+        ssl_cert_name:
+          type: string
+          description: SSL certificate name/reference
+          example: app_example_com
+        mtls_ca_cert_name:
+          type: string
+          description: mTLS CA certificate name/reference
+          example: ca_example_com
+        pool:
+          type: array
+          description: List of backend servers in the pool
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/PoolMember'
+        port:
+          type: integer
+          description: Listening port for the VIP
+          example: 443
+        protocol:
+          type: string
+          description: Protocol for the VIP
+          enum: [TCP, UDP, HTTP, HTTPS]
+          example: HTTPS
+        lb_method:
+          type: string
+          description: Load balancing method
+          enum: [ROUND_ROBIN, LEAST_CONNECTIONS, PRIORITY_GROUP]
+          example: ROUND_ROBIN
+
+    VipResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: VIP identifier
+          example: vip_123456
+        vip_fqdn:
+          type: string
+          description: Fully Qualified Domain Name of the VIP
+          example: app.example.com
+        vip_ip:
+          type: string
+          description: IP address of the VIP
+          example: 10.0.1.10
+        app_id:
+          type: string
+          description: Application identifier
+          example: APP001
+        environment:
+          type: string
+          description: Deployment environment
+          enum: [DEV, UAT, PROD]
+          example: PROD
+        datacenter:
+          type: string
+          description: Datacenter where the VIP is provisioned
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        primary_contact_email:
+          type: string
+          format: email
+          description: Primary contact email
+          example: admin@example.com
+        secondary_contact_email:
+          type: string
+          format: email
+          description: Secondary contact email
+          example: backup@example.com
+        team_distribution_email:
+          type: string
+          format: email
+          description: Team distribution email
+          example: team@example.com
+        monitor:
+          $ref: '#/components/schemas/Monitor'
+        persistence:
+          $ref: '#/components/schemas/Persistence'
+        ssl_cert_name:
+          type: string
+          description: SSL certificate name/reference
+          example: app_example_com
+        mtls_ca_cert_name:
+          type: string
+          description: mTLS CA certificate name/reference
+          example: ca_example_com
+        pool:
+          type: array
+          description: List of backend servers in the pool
+          items:
+            $ref: '#/components/schemas/PoolMember'
+        owner:
+          type: string
+          description: Owner or creator of the VIP
+          example: user123
+        port:
+          type: integer
+          description: Listening port for the VIP
+          example: 443
+        protocol:
+          type: string
+          description: Protocol for the VIP
+          enum: [TCP, UDP, HTTP, HTTPS]
+          example: HTTPS
+        lb_method:
+          type: string
+          description: Load balancing method
+          enum: [ROUND_ROBIN, LEAST_CONNECTIONS, PRIORITY_GROUP]
+          example: ROUND_ROBIN
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: 2025-05-28T12:00:00Z
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: 2025-05-28T12:00:00Z
+        version:
+          type: integer
+          description: Configuration version
+          example: 1
+        status:
+          type: string
+          description: VIP status
+          enum: [active, inactive, error]
+          example: active
+        last_change_number:
+          type: string
+          description: Last change number
+          example: CHG0012345
+
+    VipSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          description: VIP identifier
+          example: vip_123456
+        vip_fqdn:
+          type: string
+          description: Fully Qualified Domain Name of the VIP
+          example: app.example.com
+        vip_ip:
+          type: string
+          description: IP address of the VIP
+          example: 10.0.1.10
+        app_id:
+          type: string
+          description: Application identifier
+          example: APP001
+        environment:
+          type: string
+          description: Deployment environment
+          enum: [DEV, UAT, PROD]
+          example: PROD
+        datacenter:
+          type: string
+          description: Datacenter where the VIP is provisioned
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        protocol:
+          type: string
+          description: Protocol for the VIP
+          enum: [TCP, UDP, HTTP, HTTPS]
+          example: HTTPS
+        port:
+          type: integer
+          description: Listening port for the VIP
+          example: 443
+        status:
+          type: string
+          description: VIP status
+          enum: [active, inactive, error]
+          example: active
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: 2025-05-28T12:00:00Z
+
+    Monitor:
+      type: object
+      required:
+        - type
+        - interval
+        - timeout
+      properties:
+        type:
+          type: string
+          description: Monitor type
+          enum: [TCP, UDP, HTTP, HTTPS]
+          example: HTTP
+        interval:
+          type: integer
+          description: Check interval in seconds
+          example: 5
+        timeout:
+          type: integer
+          description: Timeout in seconds
+          example: 16
+        send_string:
+          type: string
+          description: String to send (for HTTP/HTTPS)
+          example: "GET /health HTTP/1.1\\r\\nHost: app.example.com\\r\\n\\r\\n"
+        receive_string:
+          type: string
+          description: Expected response string
+          example: "200 OK"
+        url_path:
+          type: string
+          description: URL path for HTTP/HTTPS monitors
+          example: "/health"
+        alternate_port:
+          type: integer
+          description: Alternate port for monitoring
+          example: 8080
+
+    Persistence:
+      type: object
+      required:
+        - type
+        - timeout
+      properties:
+        type:
+          type: string
+          description: Persistence type
+          enum: [source_ip, cookie, session]
+          example: cookie
+        cookie_name:
+          type: string
+          description: Cookie name for cookie persistence
+          example: session_id
+        timeout:
+          type: integer
+          description: Persistence timeout in seconds
+          example: 3600
+
+    PoolMember:
+      type: object
+      required:
+        - server_address
+        - server_port
+        - enabled
+      properties:
+        server_address:
+          type: string
+          description: Server IP address
+          example: 192.0.1.10
+        server_port:
+          type: integer
+          description: Server port
+          example: 80
+        weight:
+          type: integer
+          description: Server weight for priority groups
+          minimum: 1
+          maximum: 100
+          default: 1
+          example: 100
+        enabled:
+          type: boolean
+          description: Whether the server is enabled
+          default: true
+          example: true
+        monitor:
+          type: string
+          description: Server-specific monitor
+          example: tcp
+
+    EntitlementVerificationRequest:
+      type: object
+      required:
+        - app_id
+        - user_id
+        - environment
+        - datacenter
+        - server_addresses
+      properties:
+        app_id:
+          type: string
+          description: Application ID to verify
+          example: APP001
+        user_id:
+          type: string
+          description: User ID requesting access
+          example: user123
+        environment:
+          type: string
+          description: Target environment
+          enum: [DEV, UAT, PROD]
+          example: PROD
+        datacenter:
+          type: string
+          description: Target datacenter
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        server_addresses:
+          type: array
+          description: Server addresses to verify
+          items:
+            type: string
+            example: 192.0.1.10
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: CHG0012345
+
+    EntitlementVerificationResponse:
+      type: object
+      properties:
+        app_id:
+          type: string
+          description: Application ID
+          example: APP001
+        user_id:
+          type: string
+          description: User ID
+          example: user123
+        entitled:
+          type: boolean
+          description: Whether the user is entitled
+          example: true
+        servers:
+          type: array
+          description: Server entitlement details
+          items:
+            type: object
+            properties:
+              server_address:
+                type: string
+                description: Server IP address
+                example: 192.0.1.10
+              entitled:
+                type: boolean
+                description: Whether the user is entitled to this server
+                example: true
+              reason:
+                type: string
+                description: Reason for entitlement decision
+                example: "User is owner of the server"
+
+    EntitlementRecord:
+      type: object
+      properties:
+        app_id:
+          type: string
+          description: Application ID
+          example: APP001
+        environment:
+          type: string
+          description: Environment
+          enum: [DEV, UAT, PROD]
+          example: PROD
+        datacenter:
+          type: string
+          description: Datacenter
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        server_address:
+          type: string
+          description: Server IP address
+          example: 192.0.1.10
+        role:
+          type: string
+          description: User role
+          enum: [owner, admin, user]
+          example: owner
+
+    ChangeVerificationResponse:
+      type: object
+      properties:
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: CHG0012345
+        valid:
+          type: boolean
+          description: Whether the change number is valid
+          example: true
+        approved:
+          type: boolean
+          description: Whether the change is approved
+          example: true
+        start_time:
+          type: string
+          format: date-time
+          description: Scheduled start time
+          example: 2025-05-28T12:00:00Z
+        end_time:
+          type: string
+          format: date-time
+          description: Scheduled end time
+          example: 2025-05-28T14:00:00Z
+        status:
+          type: string
+          description: Change status
+          example: approved
+
+    ChangeRequest:
+      type: object
+      properties:
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: CHG0012345
+        requested_by:
+          type: string
+          description: User requesting the change
+          example: user123
+        start_time:
+          type: string
+          format: date-time
+          description: Scheduled start time
+          example: 2025-05-28T12:00:00Z
+        end_time:
+          type: string
+          format: date-time
+          description: Scheduled end time
+          example: 2025-05-28T14:00:00Z
+        description:
+          type: string
+          description: Change description
+          example: "Deploy new VIP for application"
+        status:
+          type: string
+          description: Change status
+          enum: [draft, submitted, approved, rejected, in_progress, completed, failed, canceled]
+          example: approved
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: 2025-05-27T10:00:00Z
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: 2025-05-27T11:00:00Z
+
+    PromotionRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Promotion record identifier
+          example: prom_123456
+        vip_id:
+          type: string
+          description: VIP identifier
+          example: vip_123456
+        source_environment:
+          type: string
+          description: Source environment
+          enum: [DEV, UAT, PROD]
+          example: DEV
+        target_environment:
+          type: string
+          description: Target environment
+          enum: [DEV, UAT, PROD]
+          example: UAT
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: CHG0012345
+        promoted_by:
+          type: string
+          description: User who performed the promotion
+          example: user123
+        promoted_at:
+          type: string
+          format: date-time
+          description: Promotion timestamp
+          example: 2025-05-28T12:00:00Z
+        status:
+          type: string
+          description: Promotion status
+          enum: [success, failed]
+          example: success
+
+    TransformerInfo:
+      type: object
+      properties:
+        vendor:
+          type: string
+          description: Vendor name
+          enum: [f5, avi, nginx]
+          example: f5
+        version:
+          type: string
+          description: Transformer version
+          example: 1.0.0
+        description:
+          type: string
+          description: Transformer description
+          example: "F5 BIG-IP AS3 transformer"
+        capabilities:
+          type: array
+          description: Supported capabilities
+          items:
+            type: string
+            enum: [l4, l7, ssl, mtls, persistence, monitoring]
+            example: l7
+
+    TransformerOutput:
+      type: object
+      properties:
+        vip_id:
+          type: string
+          description: VIP identifier
+          example: vip_123456
+        vendor:
+          type: string
+          description: Target vendor
+          enum: [f5, avi, nginx]
+          example: f5
+        config:
+          type: object
+          description: Vendor-specific configuration
+          example:
+            class: AS3
+            action: deploy
+            persist: true
+            declaration:
+              class: ADC
+              schemaVersion: 3.0.0
+              id: example-declaration
+              label: Sample
+              remark: Simple application
+              Sample_01:
+                class: Tenant
+                defaultRouteDomain: 0
+                Application_1:
+                  class: Application
+                  template: https
+                  serviceMain:
+                    class: Service_HTTPS
+                    virtualAddresses:
+                      - 10.0.1.10
+                    pool: web_pool
+                  web_pool:
+                    class: Pool
+                    monitors:
+                      - http
+                    members:
+                      - servicePort: 80
+                        serverAddresses:
+                          - 192.0.1.10
+                          - 192.0.1.11
+        timestamp:
+          type: string
+          format: date-time
+          description: Generation timestamp
+          example: 2025-05-28T12:00:00Z
+        version:
+          type: string
+          description: Configuration version
+          example: 1.0.0
+
+    DnsRecordCreate:
+      type: object
+      required:
+        - fqdn
+        - record_type
+        - ttl
+      properties:
+        fqdn:
+          type: string
+          description: Fully qualified domain name
+          example: app.example.com
+        record_type:
+          type: string
+          description: DNS record type
+          enum: [A, CNAME, PTR]
+          example: A
+        value:
+          type: string
+          description: Record value
+          example: 10.0.1.10
+        ttl:
+          type: integer
+          description: Time to live in seconds
+          example: 3600
+        view:
+          type: string
+          description: DNS view
+          example: internal
+        zone:
+          type: string
+          description: DNS zone
+          example: example.com
+
+    DnsRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          description: DNS record identifier
+          example: dns_123456
+        fqdn:
+          type: string
+          description: Fully qualified domain name
+          example: app.example.com
+        record_type:
+          type: string
+          description: DNS record type
+          enum: [A, CNAME, PTR]
+          example: A
+        value:
+          type: string
+          description: Record value
+          example: 10.0.1.10
+        ttl:
+          type: integer
+          description: Time to live in seconds
+          example: 3600
+        view:
+          type: string
+          description: DNS view
+          example: internal
+        zone:
+          type: string
+          description: DNS zone
+          example: example.com
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: 2025-05-28T12:00:00Z
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: 2025-05-28T12:00:00Z
+
+    CertificateCreate:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+          description: Certificate name
+          example: app_example_com
+        type:
+          type: string
+          description: Certificate type
+          enum: [ssl, ca]
+          example: ssl
+        certificate:
+          type: string
+          description: Certificate content in PEM format
+          example: "-----BEGIN CERTIFICATE-----\nMIIDazCCAlOgAwIBAgIUJlq+zz4..."
+        private_key:
+          type: string
+          description: Private key in PEM format (only for SSL certificates)
+          example: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgw..."
+        passphrase:
+          type: string
+          description: Passphrase for private key (if encrypted)
+          example: "secret"
+
+    Certificate:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Certificate identifier
+          example: cert_123456
+        name:
+          type: string
+          description: Certificate name
+          example: app_example_com
+        type:
+          type: string
+          description: Certificate type
+          enum: [ssl, ca]
+          example: ssl
+        subject:
+          type: string
+          description: Certificate subject
+          example: "CN=app.example.com, O=Example Inc, C=US"
+        issuer:
+          type: string
+          description: Certificate issuer
+          example: "CN=Example CA, O=Example Inc, C=US"
+        valid_from:
+          type: string
+          format: date-time
+          description: Certificate validity start date
+          example: 2025-01-01T00:00:00Z
+        valid_to:
+          type: string
+          format: date-time
+          description: Certificate validity end date
+          example: 2026-01-01T00:00:00Z
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: 2025-05-28T12:00:00Z
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: 2025-05-28T12:00:00Z
+
+    VipStatus:
+      type: object
+      properties:
+        vip_id:
+          type: string
+          description: VIP identifier
+          example: vip_123456
+        status:
+          type: string
+          description: VIP status
+          enum: [up, down, degraded, unknown]
+          example: up
+        availability:
+          type: number
+          description: Availability percentage
+          minimum: 0
+          maximum: 100
+          example: 99.99
+        connections:
+          type: integer
+          description: Current connections
+          example: 1024
+        throughput:
+          type: object
+          properties:
+            in:
+              type: number
+              description: Inbound throughput in Mbps
+              example: 10.5
+            out:
+              type: number
+              description: Outbound throughput in Mbps
+              example: 5.2
+        last_checked:
+          type: string
+          format: date-time
+          description: Last check timestamp
+          example: 2025-05-28T12:00:00Z
+
+    PoolStatus:
+      type: object
+      properties:
+        pool_id:
+          type: string
+          description: Pool identifier
+          example: pool_123456
+        status:
+          type: string
+          description: Pool status
+          enum: [up, down, degraded, unknown]
+          example: up
+        members:
+          type: array
+          description: Pool member status
+          items:
+            type: object
+            properties:
+              server_address:
+                type: string
+                description: Server IP address
+                example: 192.0.1.10
+              server_port:
+                type: integer
+                description: Server port
+                example: 80
+              status:
+                type: string
+                description: Member status
+                enum: [up, down, unknown]
+                example: up
+              connections:
+                type: integer
+                description: Current connections
+                example: 512
+              last_checked:
+                type: string
+                format: date-time
+                description: Last check timestamp
+                example: 2025-05-28T12:00:00Z
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Overall system status
+          enum: [healthy, degraded, unhealthy]
+          example: healthy
+        components:
+          type: object
+          properties:
+            api:
+              type: string
+              description: API status
+              enum: [healthy, degraded, unhealthy]
+              example: healthy
+            business:
+              type: string
+              description: Business layer status
+              enum: [healthy, degraded, unhealthy]
+              example: healthy
+            integration:
+              type: string
+              description: Integration layer status
+              enum: [healthy, degraded, unhealthy]
+              example: healthy
+            database:
+              type: string
+              description: Database status
+              enum: [healthy, degraded, unhealthy]
+              example: healthy
+            cache:
+              type: string
+              description: Cache status
+              enum: [healthy, degraded, unhealthy]
+              example: healthy
+        uptime:
+          type: integer
+          description: System uptime in seconds
+          example: 86400
+        version:
+          type: string
+          description: System version
+          example: 1.0.0
+        timestamp:
+          type: string
+          format: date-time
+          description: Status timestamp
+          example: 2025-05-28T12:00:00Z
+
+    SystemMetrics:
+      type: object
+      properties:
+        cpu:
+          type: number
+          description: CPU usage percentage
+          minimum: 0
+          maximum: 100
+          example: 25.5
+        memory:
+          type: number
+          description: Memory usage percentage
+          minimum: 0
+          maximum: 100
+          example: 45.2
+        disk:
+          type: number
+          description: Disk usage percentage
+          minimum: 0
+          maximum: 100
+          example: 60.8
+        requests:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: Total requests
+              example: 10000
+            success:
+              type: integer
+              description: Successful requests
+              example: 9950
+            error:
+              type: integer
+              description: Error requests
+              example: 50
+            rate:
+              type: number
+              description: Request rate per second
+              example: 10.5
+        vips:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: Total VIPs
+              example: 100
+            active:
+              type: integer
+              description: Active VIPs
+              example: 95
+            inactive:
+              type: integer
+              description: Inactive VIPs
+              example: 3
+            error:
+              type: integer
+              description: VIPs in error state
+              example: 2
+        timestamp:
+          type: string
+          format: date-time
+          description: Metrics timestamp
+          example: 2025-05-28T12:00:00Z
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: INVALID_REQUEST
+        message:
+          type: string
+          description: Error message
+          example: Invalid request parameters
+        details:
+          type: array
+          description: Error details
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Field with error
+                example: vip_fqdn
+              message:
+                type: string
+                description: Error message for field
+                example: Invalid domain name format
+        request_id:
+          type: string
+          description: Request identifier for troubleshooting
+          example: req_123456
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+          example: 2025-05-28T12:00:00Z
