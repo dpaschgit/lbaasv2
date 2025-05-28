@@ -1,0 +1,68 @@
+---
+- name: Deploy NGINX Load Balancer
+  hosts: nginx_servers
+  become: true
+  vars:
+    nginx_version: "1.21.6"
+    vip_id: "{{ vip_id }}"
+    vip_ip: "{{ vip_ip }}"
+    vip_port: "{{ vip_port }}"
+    pool_members: "{{ pool_members }}"
+    ssl_enabled: "{{ ssl_enabled | default(false) }}"
+    ssl_cert_path: "{{ ssl_cert_path | default('') }}"
+    ssl_key_path: "{{ ssl_key_path | default('') }}"
+    
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install NGINX
+      apt:
+        name: nginx={{ nginx_version }}*
+        state: present
+
+    - name: Create NGINX configuration directory for VIP
+      file:
+        path: "/etc/nginx/conf.d/vip_{{ vip_id }}"
+        state: directory
+        mode: '0755'
+
+    - name: Configure NGINX for VIP
+      template:
+        src: templates/nginx_vip.conf.j2
+        dest: "/etc/nginx/conf.d/vip_{{ vip_id }}.conf"
+      notify: Reload NGINX
+
+    - name: Ensure NGINX is started and enabled
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Configure firewall to allow NGINX traffic
+      ufw:
+        rule: allow
+        port: "{{ vip_port }}"
+        proto: tcp
+
+    - name: Register NGINX deployment in LBaaS database
+      uri:
+        url: "http://api:8000/api/v1/vips/{{ vip_id }}/nginx_deployment"
+        method: POST
+        body_format: json
+        body:
+          status: "COMPLETED"
+          server_ip: "{{ ansible_default_ipv4.address }}"
+          server_hostname: "{{ ansible_hostname }}"
+          nginx_version: "{{ nginx_version }}"
+          vip_port: "{{ vip_port }}"
+          pool_members: "{{ pool_members }}"
+        status_code: 200
+
+  handlers:
+    - name: Reload NGINX
+      service:
+        name: nginx
+        state: reloaded

@@ -1,0 +1,1835 @@
+openapi: 3.0.3
+info:
+  title: Load Balancing as a Service (LBaaS) API
+  description: |
+    API for managing Load Balancing as a Service (LBaaS) resources, including VIPs, entitlements, 
+    transformers, and integrations with ServiceNow CMDB, Bluecat DDI, and Ansible deployment automation.
+  version: 1.0.0
+  contact:
+    name: LBaaS Team
+    email: lbaas-support@example.com
+
+servers:
+  - url: https://api.lbaas.example.com/v1
+    description: Production API server
+  - url: https://api-dev.lbaas.example.com/v1
+    description: Development API server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Basic authentication for development and testing
+
+  schemas:
+    # VIP Models
+    VipBase:
+      type: object
+      required:
+        - vip_fqdn
+        - app_id
+        - environment
+        - datacenter
+        - region
+        - primary_contact_email
+        - monitor
+        - pool
+        - owner
+        - port
+        - protocol
+        - lb_method
+        - vip_type
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the VIP
+          readOnly: true
+        vip_fqdn:
+          type: string
+          description: Fully Qualified Domain Name of the VIP
+          pattern: '^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+          example: app.example.com
+        vip_ip:
+          type: string
+          description: IP address of the VIP (can be auto-assigned via IPAM)
+          format: ipv4
+          example: 192.168.1.10
+        app_id:
+          type: string
+          description: Application identifier
+          pattern: '^APP\d{3}$'
+          example: APP001
+        environment:
+          type: string
+          description: Deployment environment
+          enum: [Dev, UAT, Prod]
+          example: Prod
+        datacenter:
+          type: string
+          description: Datacenter where the VIP is provisioned
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        region:
+          type: string
+          description: Region where the VIP is provisioned
+          example: US-EAST
+        primary_contact_email:
+          type: string
+          description: Primary contact email
+          format: email
+          example: admin@example.com
+        secondary_contact_email:
+          type: string
+          description: Secondary contact email
+          format: email
+          example: backup@example.com
+        team_distribution_email:
+          type: string
+          description: Team distribution email
+          format: email
+          example: team@example.com
+        vip_type:
+          type: string
+          description: L4 or L7 VIP
+          enum: [l4, l7]
+          example: l7
+        monitor:
+          $ref: '#/components/schemas/Monitor'
+        persistence:
+          $ref: '#/components/schemas/Persistence'
+        ssl_cert_name:
+          type: string
+          description: SSL certificate name/reference (not stored)
+          example: wildcard.example.com
+        mtls_ca_cert_name:
+          type: string
+          description: mTLS CA certificate name/reference (not stored)
+          example: ca.example.com
+        pool:
+          type: array
+          description: List of backend servers in the pool
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/PoolMember'
+        owner:
+          type: string
+          description: Owner or creator of the VIP
+          example: john.doe
+        port:
+          type: integer
+          description: Listening port for the VIP
+          minimum: 1
+          maximum: 65535
+          example: 443
+        protocol:
+          type: string
+          description: Protocol for the VIP
+          enum: [TCP, HTTP, HTTPS, UDP]
+          example: HTTPS
+        lb_method:
+          type: string
+          description: Load balancing method
+          enum: [ROUND_ROBIN, LEAST_CONNECTIONS, PRIORITY_GROUP]
+          example: ROUND_ROBIN
+        priority_group:
+          $ref: '#/components/schemas/PriorityGroup'
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          readOnly: true
+        created_by:
+          type: string
+          description: User who created the VIP
+          readOnly: true
+        updated_by:
+          type: string
+          description: User who last updated the VIP
+          readOnly: true
+        bluecat_ip_allocation_id:
+          type: string
+          description: Reference to Bluecat IP allocation
+          readOnly: true
+        bluecat_dns_record_id:
+          type: string
+          description: Reference to Bluecat DNS record
+          readOnly: true
+        nginx_deployment_id:
+          type: string
+          description: Reference to NGINX deployment, if applicable
+          readOnly: true
+
+    VipCreate:
+      allOf:
+        - $ref: '#/components/schemas/VipBase'
+        - type: object
+          required:
+            - change_number
+          properties:
+            change_number:
+              type: string
+              description: ServiceNow change number for this operation
+              pattern: '^CHG\d{7}$'
+              example: CHG0012345
+            deploy_nginx:
+              type: boolean
+              description: Whether to deploy NGINX for this VIP (only applicable for Dev environment)
+              example: false
+            nginx_deployment_options:
+              $ref: '#/components/schemas/NginxDeploymentOptions'
+
+    VipUpdate:
+      allOf:
+        - $ref: '#/components/schemas/VipBase'
+        - type: object
+          required:
+            - change_number
+          properties:
+            change_number:
+              type: string
+              description: ServiceNow change number for this operation
+              pattern: '^CHG\d{7}$'
+              example: CHG0012345
+
+    Monitor:
+      type: object
+      required:
+        - type
+        - port
+        - interval
+        - timeout
+        - retries
+      properties:
+        type:
+          type: string
+          description: Type of health monitor
+          enum: [tcp, udp, http, https, ecv]
+          example: http
+        port:
+          type: integer
+          description: Port to use for health monitoring
+          minimum: 1
+          maximum: 65535
+          example: 80
+        alternate_port:
+          type: integer
+          description: Alternate port for TCP monitors
+          minimum: 1
+          maximum: 65535
+          example: 8080
+        send:
+          type: string
+          description: String to send for active health checks
+          example: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        receive:
+          type: string
+          description: Expected string to receive for successful health check
+          example: "HTTP/1.1 200 OK"
+        interval:
+          type: integer
+          description: Interval between health checks in seconds
+          minimum: 1
+          example: 5
+        timeout:
+          type: integer
+          description: Timeout for health check in seconds
+          minimum: 1
+          example: 3
+        retries:
+          type: integer
+          description: Number of retries before marking as down
+          minimum: 1
+          example: 3
+
+    Persistence:
+      type: object
+      required:
+        - type
+        - timeout
+      properties:
+        type:
+          type: string
+          description: Type of session persistence
+          enum: [source_ip, cookie, session]
+          example: cookie
+        timeout:
+          type: integer
+          description: Timeout for persistence record in seconds
+          minimum: 1
+          example: 3600
+        cookie_name:
+          type: string
+          description: Cookie name for cookie persistence
+          example: JSESSIONID
+        cookie_encryption:
+          type: boolean
+          description: Whether to encrypt the cookie
+          example: true
+
+    PoolMember:
+      type: object
+      required:
+        - ip
+        - port
+        - app_id
+      properties:
+        ip:
+          type: string
+          description: IP address of the backend server
+          format: ipv4
+          example: 10.0.0.10
+        port:
+          type: integer
+          description: Port of the backend server
+          minimum: 1
+          maximum: 65535
+          example: 8080
+        weight:
+          type: integer
+          description: Weight for load balancing
+          minimum: 1
+          example: 100
+        priority_group:
+          type: integer
+          description: Priority group ID
+          minimum: 1
+          example: 1
+        backup:
+          type: boolean
+          description: Whether this is a backup server
+          example: false
+        app_id:
+          type: string
+          description: Application ID of the server
+          pattern: '^APP\d{3}$'
+          example: APP001
+
+    PriorityGroup:
+      type: object
+      required:
+        - enabled
+        - groups
+      properties:
+        enabled:
+          type: boolean
+          description: Whether priority groups are enabled
+          example: true
+        groups:
+          type: array
+          description: List of priority group configurations
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PriorityGroupConfig'
+
+    PriorityGroupConfig:
+      type: object
+      required:
+        - id
+        - priority
+      properties:
+        id:
+          type: integer
+          description: Priority group ID
+          minimum: 1
+          example: 1
+        priority:
+          type: integer
+          description: Priority level (lower is higher priority)
+          minimum: 1
+          example: 10
+        min_active_members:
+          type: integer
+          description: Minimum active members before failing over
+          minimum: 1
+          example: 2
+
+    # Entitlement Models
+    EntitlementVerification:
+      type: object
+      required:
+        - server_ids
+        - change_number
+      properties:
+        server_ids:
+          type: array
+          description: List of server IDs to verify entitlements for
+          minItems: 1
+          items:
+            type: string
+            example: server123
+        app_ids:
+          type: array
+          description: Optional list of application IDs for verification
+          items:
+            type: string
+            pattern: '^APP\d{3}$'
+            example: APP001
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+
+    EntitlementResult:
+      type: object
+      required:
+        - server_id
+        - app_id
+        - entitled
+      properties:
+        server_id:
+          type: string
+          description: Server ID
+          example: server123
+        app_id:
+          type: string
+          description: Application ID
+          pattern: '^APP\d{3}$'
+          example: APP001
+        entitled:
+          type: boolean
+          description: Whether the user is entitled to this server
+          example: true
+        reason:
+          type: string
+          description: Reason for entitlement decision
+          example: User is owner of the application
+
+    EntitlementResultList:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          description: List of entitlement results
+          items:
+            $ref: '#/components/schemas/EntitlementResult'
+
+    UserEntitlements:
+      type: object
+      required:
+        - user_id
+        - role
+        - app_ids
+      properties:
+        user_id:
+          type: string
+          description: User ID
+          example: john.doe
+        role:
+          type: string
+          description: User role
+          enum: [admin, user, auditor]
+          example: user
+        app_ids:
+          type: array
+          description: List of application IDs the user has access to
+          items:
+            type: string
+            pattern: '^APP\d{3}$'
+            example: APP001
+
+    # Bluecat DDI Models
+    BluecatIPAllocationRequest:
+      type: object
+      required:
+        - network
+        - hostname
+        - app_id
+        - environment
+        - datacenter
+        - region
+        - change_number
+        - configuration_name
+        - view_name
+        - zone_name
+      properties:
+        network:
+          type: string
+          description: Network to allocate from
+          example: 192.168.1.0/24
+        hostname:
+          type: string
+          description: Hostname for the IP
+          example: app-server
+        app_id:
+          type: string
+          description: Application ID
+          pattern: '^APP\d{3}$'
+          example: APP001
+        environment:
+          type: string
+          description: Environment
+          enum: [Dev, UAT, Prod]
+          example: Prod
+        datacenter:
+          type: string
+          description: Datacenter
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: NYDC
+        region:
+          type: string
+          description: Region
+          example: US-EAST
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+        configuration_name:
+          type: string
+          description: Bluecat configuration name
+          example: Production
+        view_name:
+          type: string
+          description: Bluecat DNS view name
+          example: Internal
+        zone_name:
+          type: string
+          description: Bluecat DNS zone name
+          example: example.com
+
+    BluecatIPAllocationResponse:
+      type: object
+      required:
+        - ip_address
+        - subnet_mask
+        - gateway
+        - dns_servers
+        - hostname
+        - fqdn
+        - object_id
+      properties:
+        ip_address:
+          type: string
+          description: Allocated IP address
+          format: ipv4
+          example: 192.168.1.10
+        subnet_mask:
+          type: string
+          description: Subnet mask
+          example: 255.255.255.0
+        gateway:
+          type: string
+          description: Gateway
+          format: ipv4
+          example: 192.168.1.1
+        dns_servers:
+          type: array
+          description: DNS servers
+          items:
+            type: string
+            format: ipv4
+            example: 8.8.8.8
+        hostname:
+          type: string
+          description: Hostname
+          example: app-server
+        fqdn:
+          type: string
+          description: Fully qualified domain name
+          example: app-server.example.com
+        object_id:
+          type: string
+          description: Bluecat object ID
+          example: 12345
+
+    BluecatDNSRecordRequest:
+      type: object
+      required:
+        - hostname
+        - ip_address
+        - record_type
+        - ttl
+        - app_id
+        - change_number
+        - configuration_name
+        - view_name
+        - zone_name
+      properties:
+        hostname:
+          type: string
+          description: Hostname
+          example: app-server
+        ip_address:
+          type: string
+          description: IP address
+          format: ipv4
+          example: 192.168.1.10
+        record_type:
+          type: string
+          description: Record type
+          enum: [A, CNAME, AAAA, TXT]
+          example: A
+        ttl:
+          type: integer
+          description: Time to live
+          minimum: 60
+          example: 3600
+        app_id:
+          type: string
+          description: Application ID
+          pattern: '^APP\d{3}$'
+          example: APP001
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+        configuration_name:
+          type: string
+          description: Bluecat configuration name
+          example: Production
+        view_name:
+          type: string
+          description: Bluecat DNS view name
+          example: Internal
+        zone_name:
+          type: string
+          description: Bluecat DNS zone name
+          example: example.com
+        create_ptr:
+          type: boolean
+          description: Whether to create PTR record
+          example: true
+
+    BluecatDNSRecordResponse:
+      type: object
+      required:
+        - hostname
+        - fqdn
+        - ip_address
+        - record_type
+        - ttl
+        - object_id
+      properties:
+        hostname:
+          type: string
+          description: Hostname
+          example: app-server
+        fqdn:
+          type: string
+          description: Fully qualified domain name
+          example: app-server.example.com
+        ip_address:
+          type: string
+          description: IP address
+          format: ipv4
+          example: 192.168.1.10
+        record_type:
+          type: string
+          description: Record type
+          enum: [A, CNAME, AAAA, TXT]
+          example: A
+        ttl:
+          type: integer
+          description: Time to live
+          minimum: 60
+          example: 3600
+        object_id:
+          type: string
+          description: Bluecat object ID
+          example: 12345
+        ptr_record_id:
+          type: string
+          description: PTR record ID if created
+          example: 67890
+
+    # Ansible Deployment Models
+    AnsibleDeploymentRequest:
+      type: object
+      required:
+        - deployment_type
+        - environment
+        - datacenter
+        - version
+        - change_number
+      properties:
+        deployment_type:
+          type: string
+          description: Type of deployment
+          enum: [NGINX, API, FULL]
+          example: NGINX
+        environment:
+          type: string
+          description: Target environment
+          enum: [Dev, UAT, Prod]
+          example: Dev
+        datacenter:
+          type: string
+          description: Target datacenter
+          enum: [LADC, NYDC, EUDC, APDC]
+          example: LADC
+        version:
+          type: string
+          description: Version to deploy
+          example: 1.0.0
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+        parameters:
+          type: object
+          description: Additional parameters for deployment
+          additionalProperties: true
+
+    AnsibleDeploymentResponse:
+      type: object
+      required:
+        - deployment_id
+        - status
+        - start_time
+        - logs_url
+        - deployed_components
+      properties:
+        deployment_id:
+          type: string
+          description: Unique deployment identifier
+          example: deploy-123
+        status:
+          type: string
+          description: Deployment status
+          enum: [PENDING, RUNNING, COMPLETED, FAILED]
+          example: RUNNING
+        start_time:
+          type: string
+          format: date-time
+          description: Deployment start time
+        end_time:
+          type: string
+          format: date-time
+          description: Deployment end time
+        logs_url:
+          type: string
+          description: URL to deployment logs
+          example: https://logs.example.com/deploy-123
+        deployed_components:
+          type: array
+          description: List of deployed components
+          items:
+            type: string
+            example: nginx
+
+    NginxDeploymentOptions:
+      type: object
+      properties:
+        nginx_version:
+          type: string
+          description: NGINX version to deploy
+          example: 1.21.6
+        vm_template:
+          type: string
+          description: VM template to use for deployment
+          example: ubuntu-20.04
+        cpu_count:
+          type: integer
+          description: Number of CPUs
+          minimum: 1
+          example: 2
+        memory_mb:
+          type: integer
+          description: Memory in MB
+          minimum: 512
+          example: 4096
+        disk_gb:
+          type: integer
+          description: Disk size in GB
+          minimum: 10
+          example: 40
+
+    # Transformer Models
+    TransformerOutput:
+      type: object
+      required:
+        - vip_id
+        - vendor
+        - configuration
+        - generated_at
+        - generated_by
+        - change_number
+      properties:
+        vip_id:
+          type: string
+          description: VIP identifier
+          example: vip123
+        vendor:
+          type: string
+          description: Load balancer vendor
+          example: f5
+        configuration:
+          type: object
+          description: Vendor-specific configuration in standard JSON format
+          additionalProperties: true
+        generated_at:
+          type: string
+          format: date-time
+          description: Generation timestamp
+        generated_by:
+          type: string
+          description: User who generated the output
+          example: john.doe
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+
+    VendorInfo:
+      type: object
+      required:
+        - name
+        - display_name
+        - capabilities
+      properties:
+        name:
+          type: string
+          description: Vendor name
+          example: f5
+        display_name:
+          type: string
+          description: Display name
+          example: F5 BIG-IP
+        capabilities:
+          type: array
+          description: Supported capabilities
+          items:
+            type: string
+            example: l7_routing
+
+    VendorList:
+      type: object
+      required:
+        - vendors
+      properties:
+        vendors:
+          type: array
+          description: List of supported vendors
+          items:
+            $ref: '#/components/schemas/VendorInfo'
+
+    # Environment Promotion Models
+    PromotionOptions:
+      type: object
+      required:
+        - override_environment_specific
+        - change_number
+      properties:
+        override_environment_specific:
+          type: boolean
+          description: Whether to override environment-specific data
+          example: false
+        specific_overrides:
+          type: object
+          description: Specific fields to override during promotion
+          additionalProperties: true
+        change_number:
+          type: string
+          description: ServiceNow change number for this operation
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+
+    PromotionResult:
+      type: object
+      required:
+        - success
+        - source_vip_id
+        - target_vip_id
+        - target_environment
+      properties:
+        success:
+          type: boolean
+          description: Whether the promotion was successful
+          example: true
+        source_vip_id:
+          type: string
+          description: Source VIP ID
+          example: vip123
+        target_vip_id:
+          type: string
+          description: Target VIP ID
+          example: vip456
+        target_environment:
+          type: string
+          description: Target environment
+          enum: [Dev, UAT, Prod]
+          example: Prod
+        modified_fields:
+          type: array
+          description: Fields that were modified during promotion
+          items:
+            type: string
+            example: primary_contact_email
+        warnings:
+          type: array
+          description: Warnings during promotion
+          items:
+            type: string
+            example: Certificate will need to be updated in target environment
+
+    # Change Management Models
+    ChangeValidationRequest:
+      type: object
+      required:
+        - change_number
+        - operation_type
+        - resource_type
+      properties:
+        change_number:
+          type: string
+          description: ServiceNow change number
+          pattern: '^CHG\d{7}$'
+          example: CHG0012345
+        operation_type:
+          type: string
+          description: Type of operation
+          enum: [CREATE, UPDATE, DELETE, READ]
+          example: CREATE
+        resource_type:
+          type: string
+          description: Type of resource
+          example: VIP
+        resource_id:
+          type: string
+          description: Resource identifier (optional)
+          example: vip123
+
+    ChangeValidationResponse:
+      type: object
+      required:
+        - valid
+        - state
+      properties:
+        valid:
+          type: boolean
+          description: Whether the change is valid
+          example: true
+        state:
+          type: string
+          description: State of the change
+          enum: [approved, scheduled, implementing, closed, rejected]
+          example: approved
+        window_start:
+          type: string
+          format: date-time
+          description: Start of change window
+        window_end:
+          type: string
+          format: date-time
+          description: End of change window
+        owner:
+          type: string
+          description: Owner of the change
+          example: john.doe
+        reason:
+          type: string
+          description: Reason if invalid
+          example: Change is not in approved state
+
+    # Error Models
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          description: Error message
+          example: Invalid input data
+        details:
+          type: array
+          description: Error details
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Field with error
+                example: vip_fqdn
+              message:
+                type: string
+                description: Error message for field
+                example: Invalid FQDN format
+
+security:
+  - bearerAuth: []
+  - basicAuth: []
+
+paths:
+  # VIP Management Endpoints
+  /vips:
+    get:
+      summary: List VIPs
+      description: Retrieve a list of VIPs with optional filtering
+      operationId: listVips
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+        - name: app_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^APP\d{3}$'
+          description: Filter by application ID
+        - name: environment
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [Dev, UAT, Prod]
+          description: Filter by environment
+        - name: datacenter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [LADC, NYDC, EUDC, APDC]
+          description: Filter by datacenter
+        - name: region
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by region
+        - name: owner
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by owner
+        - name: vip_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [l4, l7]
+          description: Filter by VIP type
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VipBase'
+                  total:
+                    type: integer
+                    description: Total number of VIPs matching the filter
+                    example: 10
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create VIP
+      description: Create a new VIP
+      operationId: createVip
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipCreate'
+      responses:
+        '201':
+          description: VIP created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipBase'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict (e.g., VIP with same FQDN already exists)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vips/{vip_id}:
+    get:
+      summary: Get VIP
+      description: Retrieve a specific VIP by ID
+      operationId: getVip
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: VIP identifier
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipBase'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Update VIP
+      description: Update an existing VIP
+      operationId: updateVip
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: VIP identifier
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipUpdate'
+      responses:
+        '200':
+          description: VIP updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipBase'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Conflict (e.g., VIP with same FQDN already exists)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete VIP
+      description: Delete an existing VIP
+      operationId: deleteVip
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: VIP identifier
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '204':
+          description: VIP deleted successfully
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Entitlement Verification Endpoints
+  /entitlements/verify:
+    post:
+      summary: Verify Entitlement
+      description: Verify entitlements for servers
+      operationId: verifyEntitlement
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntitlementVerification'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementResultList'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /entitlements/user:
+    get:
+      summary: Get User Entitlements
+      description: Retrieve entitlements for the current user
+      operationId: getUserEntitlements
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEntitlements'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Load Balancer Transformers
+  /transformers/{vip_id}/{vendor}:
+    get:
+      summary: Get Transformer Output
+      description: Retrieve transformer output for a specific VIP and vendor
+      operationId: getTransformerOutput
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: VIP identifier
+        - name: vendor
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Vendor name
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransformerOutput'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP or vendor not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /transformers/vendors:
+    get:
+      summary: List Supported Vendors
+      description: Retrieve a list of supported vendors
+      operationId: listVendors
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendorList'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Environment Promotion
+  /promotion/{vip_id}/{target_environment}:
+    post:
+      summary: Promote VIP Configuration
+      description: Promote a VIP configuration to another environment
+      operationId: promoteVip
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Source VIP identifier
+        - name: target_environment
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [Dev, UAT, Prod]
+          description: Target environment
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromotionOptions'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionResult'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Conflict (e.g., VIP already exists in target environment)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Bluecat DDI Integration
+  /bluecat/ip/allocate:
+    post:
+      summary: Allocate IP Address
+      description: Allocate an IP address from Bluecat DDI
+      operationId: allocateIp
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BluecatIPAllocationRequest'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BluecatIPAllocationResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict (e.g., no available IPs in network)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /bluecat/ip/release/{ip_address}:
+    delete:
+      summary: Release IP Address
+      description: Release an IP address back to Bluecat DDI
+      operationId: releaseIp
+      parameters:
+        - name: ip_address
+          in: path
+          required: true
+          schema:
+            type: string
+            format: ipv4
+          description: IP address to release
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+        - name: configuration_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Bluecat configuration name
+      responses:
+        '204':
+          description: IP address released successfully
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: IP address not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /bluecat/dns:
+    post:
+      summary: Register DNS Record
+      description: Register a DNS record in Bluecat DDI
+      operationId: registerDns
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BluecatDNSRecordRequest'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BluecatDNSRecordResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict (e.g., DNS record already exists)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Ansible Deployment
+  /ansible/deploy:
+    post:
+      summary: Deploy Components
+      description: Deploy components using Ansible
+      operationId: deployComponents
+      parameters:
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnsibleDeploymentRequest'
+      responses:
+        '202':
+          description: Deployment accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnsibleDeploymentResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /ansible/deploy/{deployment_id}:
+    get:
+      summary: Get Deployment Status
+      description: Get status of an Ansible deployment
+      operationId: getDeploymentStatus
+      parameters:
+        - name: deployment_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Deployment identifier
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnsibleDeploymentResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /ansible/nginx/{vip_id}:
+    post:
+      summary: Deploy NGINX for VIP
+      description: Deploy NGINX load balancer for a specific VIP
+      operationId: deployNginx
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: VIP identifier
+        - name: change_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^CHG\d{7}$'
+          description: ServiceNow change number for this operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NginxDeploymentOptions'
+      responses:
+        '202':
+          description: Deployment accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnsibleDeploymentResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: VIP not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Change Management
+  /mock/servicenow/change:
+    post:
+      summary: Validate Change
+      description: Validate a ServiceNow change number
+      operationId: validateChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeValidationRequest'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeValidationResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Change not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
