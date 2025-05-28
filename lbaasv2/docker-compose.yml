@@ -1,0 +1,105 @@
+version: '3'
+
+services:
+  api:
+    build:
+      context: ./docker/api
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./api:/app
+    depends_on:
+      - mongo
+      - redis
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/lbaas
+      - REDIS_URI=redis://redis:6379/0
+      - JWT_SECRET=your_jwt_secret_here
+      - ENVIRONMENT=development
+
+  business:
+    build:
+      context: ./docker/business
+    volumes:
+      - ./business:/app
+    depends_on:
+      - mongo
+      - redis
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/lbaas
+      - REDIS_URI=redis://redis:6379/0
+      - ENVIRONMENT=development
+
+  integration:
+    build:
+      context: ./docker/integration
+    volumes:
+      - ./integration:/app
+    depends_on:
+      - mongo
+      - redis
+      - mock
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/lbaas
+      - REDIS_URI=redis://redis:6379/0
+      - SERVICENOW_URL=http://mock:8001/servicenow
+      - BLUECAT_URL=http://mock:8001/bluecat
+      - F5_URL=http://mock:8001/f5
+      - AVI_URL=http://mock:8001/avi
+      - ENVIRONMENT=development
+
+  mongo:
+    image: mongo:5.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
+
+  redis:
+    image: redis:6.2
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  mock:
+    build:
+      context: ./docker/mock
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./mock:/app
+    environment:
+      - ENVIRONMENT=development
+
+  monitoring:
+    build:
+      context: ./docker/monitoring
+    ports:
+      - "9090:9090"  # Prometheus
+      - "3000:3000"  # Grafana
+    volumes:
+      - prometheus_data:/prometheus
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - api
+      - business
+      - integration
+
+  ansible:
+    build:
+      context: ./docker/ansible
+    volumes:
+      - ./ansible:/ansible
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ENVIRONMENT=development
+
+volumes:
+  mongo_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
