@@ -1,0 +1,1779 @@
+openapi: 3.0.3
+info:
+  title: Load Balancing as a Service (LBaaS) API
+  description: |
+    API for managing load balancing services across multiple vendors (F5 BIG-IP via AS3, AVI Networks, and NGINX).
+    Provides VIP management, entitlement verification, and vendor-agnostic configuration.
+    
+    ## Authentication
+    This API uses JWT Bearer token authentication. To obtain a token, use the `/api/v1/auth/token` endpoint.
+    
+    ## Rate Limiting
+    API requests are limited to 100 requests per minute per user.
+    
+    ## Error Handling
+    The API uses standard HTTP status codes and returns detailed error messages in the response body.
+  version: 1.0.0
+  contact:
+    name: LBaaS Team
+    email: lbaas-support@example.com
+servers:
+  - url: https://lbaas.example.com/api/v1
+    description: Production server
+  - url: https://lbaas-dev.example.com/api/v1
+    description: Development server
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT Bearer token authentication.
+        Get your token by making a POST request to `/api/v1/auth/token` with your username and password.
+
+  schemas:
+    User:
+      type: object
+      properties:
+        username:
+          type: string
+          description: Username for authentication
+          example: "john.doe"
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        full_name:
+          type: string
+          description: User's full name
+          example: "John Doe"
+        role:
+          type: string
+          enum: [user, admin, auditor]
+          description: User's role in the system
+          example: "user"
+        app_ids:
+          type: array
+          items:
+            type: string
+          description: List of application IDs the user has access to
+          example: ["APP001", "APP002"]
+        disabled:
+          type: boolean
+          description: Whether the user account is disabled
+          example: false
+      required:
+        - username
+        - role
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqb2huLmRvZSIsInJvbGUiOiJ1c2VyIiwiZXhwIjoxNjE2MjM5MDIyfQ.XYZ"
+        token_type:
+          type: string
+          description: Type of token
+          example: "bearer"
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+          example: 1800
+      required:
+        - access_token
+        - token_type
+
+    VipBase:
+      type: object
+      properties:
+        vip_fqdn:
+          type: string
+          description: Fully qualified domain name for the VIP
+          example: "app1.example.com"
+        app_id:
+          type: string
+          description: Application identifier (must be in range APP001-APP010)
+          example: "APP001"
+        environment:
+          type: string
+          enum: [Dev, UAT, Prod]
+          description: Deployment environment
+          example: "Dev"
+        datacenter:
+          type: string
+          enum: [LADC, NYDC, EUDC, APDC]
+          description: Datacenter location
+          example: "LADC"
+        primary_contact_email:
+          type: string
+          format: email
+          description: Primary contact email for the VIP
+          example: "admin@example.com"
+        secondary_contact_email:
+          type: array
+          items:
+            type: string
+            format: email
+          description: Secondary contact emails for the VIP
+          example: ["team@example.com", "manager@example.com"]
+        monitor:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [http, https, tcp]
+              description: Type of health monitor
+              example: "http"
+            uri:
+              type: string
+              description: URI path for HTTP/HTTPS monitors
+              example: "/health"
+            port:
+              type: integer
+              description: Port for TCP monitors
+              example: 8080
+            interval:
+              type: integer
+              description: Check interval in seconds
+              example: 5
+            timeout:
+              type: integer
+              description: Timeout in seconds
+              example: 16
+            retries:
+              type: integer
+              description: Number of retries before marking as down
+              example: 3
+          required:
+            - type
+            - interval
+            - timeout
+            - retries
+        persistence:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [source_ip, cookie, none]
+              description: Type of session persistence
+              example: "source_ip"
+            timeout:
+              type: integer
+              description: Persistence timeout in seconds
+              example: 300
+          required:
+            - type
+        pool:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolMember'
+          description: Pool of backend servers
+          minItems: 2
+          maxItems: 10
+        port:
+          type: integer
+          description: Port number for the VIP
+          example: 80
+        protocol:
+          type: string
+          enum: [HTTP, HTTPS, TCP]
+          description: Protocol for the VIP
+          example: "HTTP"
+        lb_method:
+          type: string
+          enum: [ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_RESPONSE_TIME]
+          description: Load balancing method
+          example: "ROUND_ROBIN"
+      required:
+        - vip_fqdn
+        - app_id
+        - environment
+        - datacenter
+        - primary_contact_email
+        - monitor
+        - persistence
+        - pool
+        - port
+        - protocol
+        - lb_method
+
+    VipCreate:
+      allOf:
+        - $ref: '#/components/schemas/VipBase'
+        - type: object
+          properties:
+            change_number:
+              type: string
+              description: ServiceNow change number for tracking
+              example: "CHG0001"
+          required:
+            - change_number
+
+    VipUpdate:
+      allOf:
+        - $ref: '#/components/schemas/VipBase'
+        - type: object
+          properties:
+            change_number:
+              type: string
+              description: ServiceNow change number for tracking
+              example: "CHG0002"
+          required:
+            - change_number
+
+    VipDB:
+      allOf:
+        - $ref: '#/components/schemas/VipBase'
+        - type: object
+          properties:
+            id:
+              type: string
+              description: Unique identifier for the VIP
+              example: "60f1a5c5b5b4a1e9b5b4a1e9"
+            owner:
+              type: string
+              description: Username of the VIP owner
+              example: "john.doe"
+            vip_ip:
+              type: string
+              format: ipv4
+              description: IP address assigned to the VIP
+              example: "10.0.0.1"
+            created_at:
+              type: string
+              format: date-time
+              description: Creation timestamp
+              example: "2023-01-01T12:00:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              description: Last update timestamp
+              example: "2023-01-02T12:00:00Z"
+          required:
+            - id
+            - owner
+            - created_at
+            - updated_at
+
+    VipResponse:
+      allOf:
+        - $ref: '#/components/schemas/VipDB'
+
+    VipSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the VIP
+          example: "60f1a5c5b5b4a1e9b5b4a1e9"
+        vip_fqdn:
+          type: string
+          description: Fully qualified domain name for the VIP
+          example: "app1.example.com"
+        vip_ip:
+          type: string
+          format: ipv4
+          description: IP address assigned to the VIP
+          example: "10.0.0.1"
+        app_id:
+          type: string
+          description: Application identifier
+          example: "APP001"
+        environment:
+          type: string
+          enum: [Dev, UAT, Prod]
+          description: Deployment environment
+          example: "Dev"
+        datacenter:
+          type: string
+          enum: [LADC, NYDC, EUDC, APDC]
+          description: Datacenter location
+          example: "LADC"
+        owner:
+          type: string
+          description: Username of the VIP owner
+          example: "john.doe"
+        status:
+          type: string
+          enum: [active, inactive, error]
+          description: Current status of the VIP
+          example: "active"
+      required:
+        - id
+        - vip_fqdn
+        - app_id
+        - environment
+        - datacenter
+        - owner
+        - status
+
+    VipStatus:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the VIP
+          example: "60f1a5c5b5b4a1e9b5b4a1e9"
+        vip_fqdn:
+          type: string
+          description: Fully qualified domain name for the VIP
+          example: "app1.example.com"
+        vip_ip:
+          type: string
+          format: ipv4
+          description: IP address assigned to the VIP
+          example: "10.0.0.1"
+        status:
+          type: string
+          enum: [active, inactive, error]
+          description: Current status of the VIP
+          example: "active"
+        health:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: Health status of the VIP
+          example: "healthy"
+        pool_status:
+          type: array
+          items:
+            type: object
+            properties:
+              server:
+                type: string
+                description: Server hostname or IP
+                example: "server1.ladc.example.com"
+              status:
+                type: string
+                enum: [up, down, unknown]
+                description: Status of the pool member
+                example: "up"
+              last_checked:
+                type: string
+                format: date-time
+                description: Last health check timestamp
+                example: "2023-01-02T12:00:00Z"
+          description: Status of pool members
+        last_updated:
+          type: string
+          format: date-time
+          description: Last status update timestamp
+          example: "2023-01-02T12:00:00Z"
+      required:
+        - id
+        - vip_fqdn
+        - status
+        - health
+        - last_updated
+
+    PoolMember:
+      type: object
+      properties:
+        server:
+          type: string
+          description: Server hostname or IP
+          example: "server1.ladc.example.com"
+        port:
+          type: integer
+          description: Port number
+          example: 8080
+        weight:
+          type: integer
+          description: Weight for load balancing
+          minimum: 1
+          maximum: 100
+          example: 1
+      required:
+        - server
+        - port
+        - weight
+
+    EntitlementVerificationRequest:
+      type: object
+      properties:
+        app_id:
+          type: string
+          description: Application identifier
+          example: "APP001"
+        servers:
+          type: array
+          items:
+            type: string
+          description: List of servers to verify entitlements for
+          example: ["server1.ladc.example.com", "server2.ladc.example.com"]
+      required:
+        - app_id
+        - servers
+
+    EntitlementVerificationResponse:
+      type: object
+      properties:
+        app_id:
+          type: string
+          description: Application identifier
+          example: "APP001"
+        verified:
+          type: boolean
+          description: Whether all servers are verified
+          example: true
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              server:
+                type: string
+                description: Server hostname or IP
+                example: "server1.ladc.example.com"
+              verified:
+                type: boolean
+                description: Whether the server is verified
+                example: true
+              reason:
+                type: string
+                description: Reason for verification result
+                example: "Server belongs to APP001"
+          description: Verification results for each server
+      required:
+        - app_id
+        - verified
+        - results
+
+    EntitlementRecord:
+      type: object
+      properties:
+        app_id:
+          type: string
+          description: Application identifier
+          example: "APP001"
+        server:
+          type: string
+          description: Server hostname or IP
+          example: "server1.ladc.example.com"
+        role:
+          type: string
+          enum: [owner, contributor, viewer]
+          description: Role for the entitlement
+          example: "owner"
+        granted_at:
+          type: string
+          format: date-time
+          description: When the entitlement was granted
+          example: "2023-01-01T12:00:00Z"
+        granted_by:
+          type: string
+          description: Who granted the entitlement
+          example: "admin"
+      required:
+        - app_id
+        - server
+        - role
+        - granted_at
+        - granted_by
+
+    ChangeVerificationResponse:
+      type: object
+      properties:
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: "CHG0012345"
+        valid:
+          type: boolean
+          description: Whether the change number is valid
+          example: true
+        status:
+          type: string
+          enum: [approved, pending, rejected, completed]
+          description: Status of the change
+          example: "approved"
+        details:
+          type: string
+          description: Additional details about the change
+          example: "Change approved for implementation"
+      required:
+        - change_number
+        - valid
+        - status
+
+    ChangeRequest:
+      type: object
+      properties:
+        change_number:
+          type: string
+          description: ServiceNow change number
+          example: "CHG0012345"
+        status:
+          type: string
+          enum: [approved, pending, rejected, completed, failed]
+          description: Status of the change
+          example: "approved"
+        description:
+          type: string
+          description: Description of the change
+          example: "Create new VIP for application APP001"
+        requester:
+          type: string
+          description: Username of the requester
+          example: "john.doe"
+        approver:
+          type: string
+          description: Username of the approver
+          example: "manager"
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2023-01-01T12:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2023-01-02T12:00:00Z"
+        implementation_date:
+          type: string
+          format: date-time
+          description: Planned implementation date
+          example: "2023-01-03T12:00:00Z"
+      required:
+        - change_number
+        - status
+        - description
+        - requester
+        - created_at
+        - updated_at
+
+    Error:
+      type: object
+      properties:
+        status_code:
+          type: integer
+          description: HTTP status code
+          example: 400
+        detail:
+          type: string
+          description: Error message
+          example: "Invalid input data"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Field with error
+                example: "vip_fqdn"
+              message:
+                type: string
+                description: Error message for the field
+                example: "Invalid domain name format"
+          description: Detailed validation errors
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+          example: "2023-01-01T12:00:00Z"
+      required:
+        - status_code
+        - detail
+        - timestamp
+
+  parameters:
+    ChangeNumberHeader:
+      name: X-Change-Number
+      in: header
+      description: ServiceNow change number for tracking
+      required: true
+      schema:
+        type: string
+        example: "CHG0012345"
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 400
+            detail: "Invalid input data"
+            errors:
+              - field: "vip_fqdn"
+                message: "Invalid domain name format"
+              - field: "pool"
+                message: "At least 2 pool members are required"
+            timestamp: "2023-01-01T12:00:00Z"
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 401
+            detail: "Not authenticated"
+            timestamp: "2023-01-01T12:00:00Z"
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 403
+            detail: "Not authorized to access this resource"
+            timestamp: "2023-01-01T12:00:00Z"
+
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 404
+            detail: "Resource not found"
+            timestamp: "2023-01-01T12:00:00Z"
+
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 409
+            detail: "Resource already exists"
+            timestamp: "2023-01-01T12:00:00Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status_code: 500
+            detail: "Internal server error"
+            timestamp: "2023-01-01T12:00:00Z"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Authentication
+    description: Operations for authentication and user management
+  - name: VIP Management
+    description: Operations for managing Virtual IPs
+  - name: Entitlement
+    description: Operations for verifying entitlements
+  - name: Change Management
+    description: Operations for managing change requests
+  - name: Environment Promotion
+    description: Operations for promoting configurations between environments
+  - name: Transformer
+    description: Operations for transforming configurations for different vendors
+  - name: IPAM/DNS
+    description: Operations for IP address and DNS management
+  - name: Certificate
+    description: Operations for certificate management
+  - name: Monitoring
+    description: Operations for monitoring and health checks
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the API
+      operationId: healthCheck
+      tags:
+        - Health
+      security: []  # No authentication required
+      responses:
+        '200':
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, unhealthy]
+                    description: Health status
+                    example: "healthy"
+                  service:
+                    type: string
+                    description: Service name
+                    example: "LBaaS API"
+                  version:
+                    type: string
+                    description: Service version
+                    example: "1.0.0"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    description: Timestamp of the health check
+                    example: "2023-01-01T12:00:00Z"
+                required:
+                  - status
+                  - service
+              example:
+                status: "healthy"
+                service: "LBaaS API"
+                version: "1.0.0"
+                timestamp: "2023-01-01T12:00:00Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/token:
+    post:
+      summary: Get access token
+      description: |
+        Authenticates a user and returns a JWT token.
+        This token must be included in the Authorization header for all authenticated requests.
+      operationId: getToken
+      tags:
+        - Authentication
+      security: []  # No authentication required
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  description: Username
+                  example: "john.doe"
+                password:
+                  type: string
+                  description: Password
+                  format: password
+                  example: "password123"
+              required:
+                - username
+                - password
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                access_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqb2huLmRvZSIsInJvbGUiOiJ1c2VyIiwiZXhwIjoxNjE2MjM5MDIyfQ.XYZ"
+                token_type: "bearer"
+                expires_in: 1800
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                status_code: 401
+                detail: "Incorrect username or password"
+                timestamp: "2023-01-01T12:00:00Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/users/me:
+    get:
+      summary: Get current user
+      description: Returns the current authenticated user's details
+      operationId: getCurrentUser
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Current user details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                username: "john.doe"
+                email: "john.doe@example.com"
+                full_name: "John Doe"
+                role: "user"
+                app_ids: ["APP001", "APP002"]
+                disabled: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /vips:
+    post:
+      summary: Create a new VIP
+      description: |
+        Creates a new Virtual IP with the specified configuration.
+        
+        The request must include a valid ServiceNow change number in the X-Change-Number header.
+        
+        The VIP FQDN must be a valid domain name, and the app_id must be in the range APP001-APP010.
+        
+        The pool must contain exactly 2 members, each with a server, port, and weight.
+        
+        Example request:
+        ```json
+        {
+          "vip_fqdn": "app1.example.com",
+          "app_id": "APP001",
+          "environment": "Dev",
+          "datacenter": "LADC",
+          "primary_contact_email": "admin@example.com",
+          "monitor": {
+            "type": "http",
+            "uri": "/health",
+            "interval": 5,
+            "timeout": 16,
+            "retries": 3
+          },
+          "persistence": {
+            "type": "source_ip",
+            "timeout": 300
+          },
+          "pool": [
+            {
+              "server": "server1.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            },
+            {
+              "server": "server2.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            }
+          ],
+          "port": 80,
+          "protocol": "HTTP",
+          "lb_method": "ROUND_ROBIN",
+          "change_number": "CHG0001"
+        }
+        ```
+      operationId: createVip
+      tags:
+        - VIP Management
+      parameters:
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipCreate'
+            example:
+              vip_fqdn: "app1.example.com"
+              app_id: "APP001"
+              environment: "Dev"
+              datacenter: "LADC"
+              primary_contact_email: "admin@example.com"
+              monitor:
+                type: "http"
+                uri: "/health"
+                interval: 5
+                timeout: 16
+                retries: 3
+              persistence:
+                type: "source_ip"
+                timeout: 300
+              pool:
+                - server: "server1.ladc.example.com"
+                  port: 8080
+                  weight: 1
+                - server: "server2.ladc.example.com"
+                  port: 8080
+                  weight: 1
+              port: 80
+              protocol: "HTTP"
+              lb_method: "ROUND_ROBIN"
+              change_number: "CHG0001"
+      responses:
+        '201':
+          description: VIP created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+              example:
+                id: "60f1a5c5b5b4a1e9b5b4a1e9"
+                vip_fqdn: "app1.example.com"
+                vip_ip: "10.0.0.1"
+                app_id: "APP001"
+                environment: "Dev"
+                datacenter: "LADC"
+                primary_contact_email: "admin@example.com"
+                monitor:
+                  type: "http"
+                  uri: "/health"
+                  interval: 5
+                  timeout: 16
+                  retries: 3
+                persistence:
+                  type: "source_ip"
+                  timeout: 300
+                pool:
+                  - server: "server1.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                  - server: "server2.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                port: 80
+                protocol: "HTTP"
+                lb_method: "ROUND_ROBIN"
+                owner: "john.doe"
+                created_at: "2023-01-01T12:00:00Z"
+                updated_at: "2023-01-01T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List all VIPs
+      description: |
+        Returns a list of all VIPs the user has access to.
+        
+        Results can be filtered by app_id, environment, datacenter, and owner.
+        
+        Pagination is supported with page and limit parameters.
+        
+        Example response:
+        ```json
+        {
+          "total": 2,
+          "page": 1,
+          "limit": 20,
+          "vips": [
+            {
+              "id": "60f1a5c5b5b4a1e9b5b4a1e9",
+              "vip_fqdn": "app1.example.com",
+              "vip_ip": "10.0.0.1",
+              "app_id": "APP001",
+              "environment": "Dev",
+              "datacenter": "LADC",
+              "owner": "john.doe",
+              "status": "active"
+            },
+            {
+              "id": "60f1a5c5b5b4a1e9b5b4a1ea",
+              "vip_fqdn": "app2.example.com",
+              "vip_ip": "10.0.0.2",
+              "app_id": "APP002",
+              "environment": "Dev",
+              "datacenter": "LADC",
+              "owner": "john.doe",
+              "status": "active"
+            }
+          ]
+        }
+        ```
+      operationId: listVips
+      tags:
+        - VIP Management
+      parameters:
+        - name: app_id
+          in: query
+          description: Filter by application ID
+          schema:
+            type: string
+            example: "APP001"
+        - name: environment
+          in: query
+          description: Filter by environment
+          schema:
+            type: string
+            enum: [Dev, UAT, Prod]
+            example: "Dev"
+        - name: datacenter
+          in: query
+          description: Filter by datacenter
+          schema:
+            type: string
+            enum: [LADC, NYDC, EUDC, APDC]
+            example: "LADC"
+        - name: owner
+          in: query
+          description: Filter by owner username
+          schema:
+            type: string
+            example: "john.doe"
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+            example: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+            example: 20
+      responses:
+        '200':
+          description: List of VIPs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    description: Total number of VIPs
+                    example: 2
+                  page:
+                    type: integer
+                    description: Current page number
+                    example: 1
+                  limit:
+                    type: integer
+                    description: Number of items per page
+                    example: 20
+                  vips:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VipSummary'
+                required:
+                  - total
+                  - page
+                  - limit
+                  - vips
+              example:
+                total: 2
+                page: 1
+                limit: 20
+                vips:
+                  - id: "60f1a5c5b5b4a1e9b5b4a1e9"
+                    vip_fqdn: "app1.example.com"
+                    vip_ip: "10.0.0.1"
+                    app_id: "APP001"
+                    environment: "Dev"
+                    datacenter: "LADC"
+                    owner: "john.doe"
+                    status: "active"
+                  - id: "60f1a5c5b5b4a1e9b5b4a1ea"
+                    vip_fqdn: "app2.example.com"
+                    vip_ip: "10.0.0.2"
+                    app_id: "APP002"
+                    environment: "Dev"
+                    datacenter: "LADC"
+                    owner: "john.doe"
+                    status: "active"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /vips/{vip_id}:
+    get:
+      summary: Get a specific VIP
+      description: |
+        Returns details for a specific VIP.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        Example response:
+        ```json
+        {
+          "id": "60f1a5c5b5b4a1e9b5b4a1e9",
+          "vip_fqdn": "app1.example.com",
+          "vip_ip": "10.0.0.1",
+          "app_id": "APP001",
+          "environment": "Dev",
+          "datacenter": "LADC",
+          "primary_contact_email": "admin@example.com",
+          "monitor": {
+            "type": "http",
+            "uri": "/health",
+            "interval": 5,
+            "timeout": 16,
+            "retries": 3
+          },
+          "persistence": {
+            "type": "source_ip",
+            "timeout": 300
+          },
+          "pool": [
+            {
+              "server": "server1.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            },
+            {
+              "server": "server2.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            }
+          ],
+          "port": 80,
+          "protocol": "HTTP",
+          "lb_method": "ROUND_ROBIN",
+          "owner": "john.doe",
+          "created_at": "2023-01-01T12:00:00Z",
+          "updated_at": "2023-01-01T12:00:00Z"
+        }
+        ```
+      operationId: getVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+      responses:
+        '200':
+          description: VIP details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+              example:
+                id: "60f1a5c5b5b4a1e9b5b4a1e9"
+                vip_fqdn: "app1.example.com"
+                vip_ip: "10.0.0.1"
+                app_id: "APP001"
+                environment: "Dev"
+                datacenter: "LADC"
+                primary_contact_email: "admin@example.com"
+                monitor:
+                  type: "http"
+                  uri: "/health"
+                  interval: 5
+                  timeout: 16
+                  retries: 3
+                persistence:
+                  type: "source_ip"
+                  timeout: 300
+                pool:
+                  - server: "server1.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                  - server: "server2.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                port: 80
+                protocol: "HTTP"
+                lb_method: "ROUND_ROBIN"
+                owner: "john.doe"
+                created_at: "2023-01-01T12:00:00Z"
+                updated_at: "2023-01-01T12:00:00Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      summary: Update a VIP
+      description: |
+        Updates an existing VIP configuration.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        The request must include a valid ServiceNow change number in the X-Change-Number header.
+        
+        Example request:
+        ```json
+        {
+          "vip_fqdn": "app1.example.com",
+          "app_id": "APP001",
+          "environment": "Dev",
+          "datacenter": "LADC",
+          "primary_contact_email": "admin@example.com",
+          "monitor": {
+            "type": "tcp",
+            "port": 8080,
+            "interval": 5,
+            "timeout": 16,
+            "retries": 3
+          },
+          "persistence": {
+            "type": "source_ip",
+            "timeout": 300
+          },
+          "pool": [
+            {
+              "server": "server1.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            },
+            {
+              "server": "server3.ladc.example.com",
+              "port": 8080,
+              "weight": 1
+            }
+          ],
+          "port": 80,
+          "protocol": "HTTP",
+          "lb_method": "LEAST_CONNECTIONS",
+          "change_number": "CHG0002"
+        }
+        ```
+      operationId: updateVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipUpdate'
+            example:
+              vip_fqdn: "app1.example.com"
+              app_id: "APP001"
+              environment: "Dev"
+              datacenter: "LADC"
+              primary_contact_email: "admin@example.com"
+              monitor:
+                type: "tcp"
+                port: 8080
+                interval: 5
+                timeout: 16
+                retries: 3
+              persistence:
+                type: "source_ip"
+                timeout: 300
+              pool:
+                - server: "server1.ladc.example.com"
+                  port: 8080
+                  weight: 1
+                - server: "server3.ladc.example.com"
+                  port: 8080
+                  weight: 1
+              port: 80
+              protocol: "HTTP"
+              lb_method: "LEAST_CONNECTIONS"
+              change_number: "CHG0002"
+      responses:
+        '200':
+          description: VIP updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+              example:
+                id: "60f1a5c5b5b4a1e9b5b4a1e9"
+                vip_fqdn: "app1.example.com"
+                vip_ip: "10.0.0.1"
+                app_id: "APP001"
+                environment: "Dev"
+                datacenter: "LADC"
+                primary_contact_email: "admin@example.com"
+                monitor:
+                  type: "tcp"
+                  port: 8080
+                  interval: 5
+                  timeout: 16
+                  retries: 3
+                persistence:
+                  type: "source_ip"
+                  timeout: 300
+                pool:
+                  - server: "server1.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                  - server: "server3.ladc.example.com"
+                    port: 8080
+                    weight: 1
+                port: 80
+                protocol: "HTTP"
+                lb_method: "LEAST_CONNECTIONS"
+                owner: "john.doe"
+                created_at: "2023-01-01T12:00:00Z"
+                updated_at: "2023-01-02T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete a VIP
+      description: |
+        Deletes an existing VIP.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        The request must include a valid ServiceNow change number in the X-Change-Number header.
+        
+        Example request body:
+        ```json
+        {
+          "change_number": "CHG0003"
+        }
+        ```
+      operationId: deleteVip
+      tags:
+        - VIP Management
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                change_number:
+                  type: string
+                  description: ServiceNow change number for tracking
+                  example: "CHG0003"
+              required:
+                - change_number
+            example:
+              change_number: "CHG0003"
+      responses:
+        '204':
+          description: VIP deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /vips/{vip_id}/status:
+    get:
+      summary: Get VIP status
+      description: |
+        Returns the current status of a VIP.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        Example response:
+        ```json
+        {
+          "id": "60f1a5c5b5b4a1e9b5b4a1e9",
+          "vip_fqdn": "app1.example.com",
+          "vip_ip": "10.0.0.1",
+          "status": "active",
+          "health": "healthy",
+          "pool_status": [
+            {
+              "server": "server1.ladc.example.com",
+              "status": "up",
+              "last_checked": "2023-01-02T12:00:00Z"
+            },
+            {
+              "server": "server2.ladc.example.com",
+              "status": "up",
+              "last_checked": "2023-01-02T12:00:00Z"
+            }
+          ],
+          "last_updated": "2023-01-02T12:00:00Z"
+        }
+        ```
+      operationId: getVipStatus
+      tags:
+        - VIP Management
+        - Monitoring
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+      responses:
+        '200':
+          description: VIP status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipStatus'
+              example:
+                id: "60f1a5c5b5b4a1e9b5b4a1e9"
+                vip_fqdn: "app1.example.com"
+                vip_ip: "10.0.0.1"
+                status: "active"
+                health: "healthy"
+                pool_status:
+                  - server: "server1.ladc.example.com"
+                    status: "up"
+                    last_checked: "2023-01-02T12:00:00Z"
+                  - server: "server2.ladc.example.com"
+                    status: "up"
+                    last_checked: "2023-01-02T12:00:00Z"
+                last_updated: "2023-01-02T12:00:00Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /entitlements/verify:
+    post:
+      summary: Verify entitlements
+      description: |
+        Verifies if a user has entitlements for specified servers.
+        
+        Example request:
+        ```json
+        {
+          "app_id": "APP001",
+          "servers": [
+            "server1.ladc.example.com",
+            "server2.ladc.example.com"
+          ]
+        }
+        ```
+        
+        Example response:
+        ```json
+        {
+          "app_id": "APP001",
+          "verified": true,
+          "results": [
+            {
+              "server": "server1.ladc.example.com",
+              "verified": true,
+              "reason": "Server belongs to APP001"
+            },
+            {
+              "server": "server2.ladc.example.com",
+              "verified": true,
+              "reason": "Server belongs to APP001"
+            }
+          ]
+        }
+        ```
+      operationId: verifyEntitlements
+      tags:
+        - Entitlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntitlementVerificationRequest'
+            example:
+              app_id: "APP001"
+              servers:
+                - "server1.ladc.example.com"
+                - "server2.ladc.example.com"
+      responses:
+        '200':
+          description: Entitlement verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementVerificationResponse'
+              example:
+                app_id: "APP001"
+                verified: true
+                results:
+                  - server: "server1.ladc.example.com"
+                    verified: true
+                    reason: "Server belongs to APP001"
+                  - server: "server2.ladc.example.com"
+                    verified: true
+                    reason: "Server belongs to APP001"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /transformers/{vendor}/{vip_id}:
+    get:
+      summary: Get vendor-specific configuration
+      description: |
+        Returns the vendor-specific configuration for a VIP.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        Supported vendors: f5, avi, nginx
+        
+        Example response for F5:
+        ```json
+        {
+          "class": "AS3",
+          "action": "deploy",
+          "persist": true,
+          "declaration": {
+            "class": "ADC",
+            "schemaVersion": "3.0.0",
+            "id": "app1",
+            "app1": {
+              "class": "Tenant",
+              "app1_vs": {
+                "class": "Application",
+                "template": "http",
+                "serviceMain": {
+                  "class": "Service_HTTP",
+                  "virtualAddresses": ["10.0.0.1"],
+                  "virtualPort": 80,
+                  "pool": "app1_pool"
+                },
+                "app1_pool": {
+                  "class": "Pool",
+                  "monitors": [
+                    {
+                      "use": "app1_monitor"
+                    }
+                  ],
+                  "members": [
+                    {
+                      "servicePort": 8080,
+                      "serverAddresses": ["server1.ladc.example.com"]
+                    },
+                    {
+                      "servicePort": 8080,
+                      "serverAddresses": ["server2.ladc.example.com"]
+                    }
+                  ]
+                },
+                "app1_monitor": {
+                  "class": "Monitor",
+                  "monitorType": "http",
+                  "send": "GET /health HTTP/1.1\\r\\nHost: app1.example.com\\r\\nConnection: close\\r\\n\\r\\n",
+                  "receive": "200 OK"
+                }
+              }
+            }
+          }
+        }
+        ```
+      operationId: getVendorConfig
+      tags:
+        - Transformer
+      parameters:
+        - name: vendor
+          in: path
+          required: true
+          description: Vendor name
+          schema:
+            type: string
+            enum: [f5, avi, nginx]
+            example: "f5"
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+      responses:
+        '200':
+          description: Vendor-specific configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Vendor-specific configuration
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /changes/verify:
+    post:
+      summary: Verify a change number
+      description: |
+        Verifies if a change number is valid and approved.
+        
+        Example request:
+        ```json
+        {
+          "change_number": "CHG0012345"
+        }
+        ```
+        
+        Example response:
+        ```json
+        {
+          "change_number": "CHG0012345",
+          "valid": true,
+          "status": "approved",
+          "details": "Change approved for implementation"
+        }
+        ```
+      operationId: verifyChange
+      tags:
+        - Change Management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - change_number
+              properties:
+                change_number:
+                  type: string
+                  description: ServiceNow change number
+                  example: "CHG0012345"
+            example:
+              change_number: "CHG0012345"
+      responses:
+        '200':
+          description: Change verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeVerificationResponse'
+              example:
+                change_number: "CHG0012345"
+                valid: true
+                status: "approved"
+                details: "Change approved for implementation"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /promotion/{vip_id}/{target_env}:
+    post:
+      summary: Promote VIP to target environment
+      description: |
+        Promotes a VIP configuration to a target environment.
+        
+        The user must have access to the VIP, either as the owner, a secondary contact, or an admin.
+        
+        The request must include a valid ServiceNow change number in the X-Change-Number header.
+        
+        Example request:
+        ```json
+        {
+          "override_params": {
+            "pool": [
+              {
+                "server": "server1.uat.example.com",
+                "port": 8080,
+                "weight": 1
+              },
+              {
+                "server": "server2.uat.example.com",
+                "port": 8080,
+                "weight": 1
+              }
+            ]
+          }
+        }
+        ```
+      operationId: promoteVip
+      tags:
+        - Environment Promotion
+      parameters:
+        - name: vip_id
+          in: path
+          required: true
+          description: VIP identifier
+          schema:
+            type: string
+            example: "60f1a5c5b5b4a1e9b5b4a1e9"
+        - name: target_env
+          in: path
+          required: true
+          description: Target environment
+          schema:
+            type: string
+            enum: [Dev, UAT, Prod]
+            example: "UAT"
+        - $ref: '#/components/parameters/ChangeNumberHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                override_params:
+                  type: object
+                  description: Parameters to override in the target environment
+            example:
+              override_params:
+                pool:
+                  - server: "server1.uat.example.com"
+                    port: 8080
+                    weight: 1
+                  - server: "server2.uat.example.com"
+                    port: 8080
+                    weight: 1
+      responses:
+        '200':
+          description: VIP promoted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'

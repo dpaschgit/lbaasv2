@@ -9,8 +9,8 @@ services:
     container_name: lbaas-api
     ports:
       - "8000:8000"
-    volumes:
-      - ./api:/app
+#    volumes:
+#      - ./api:/app
     environment:
       - MONGODB_URI=mongodb://mongodb:27017/lbaas
       - REDIS_URI=redis://redis:6379/0
@@ -37,8 +37,8 @@ services:
     container_name: lbaas-business
     ports:
       - "8001:8001"
-    volumes:
-      - ./business:/app
+ #   volumes:
+ #     - ./business:/app
     environment:
       - MONGODB_URI=mongodb://mongodb:27017/lbaas
       - REDIS_URI=redis://redis:6379/0
@@ -65,8 +65,8 @@ services:
     container_name: lbaas-integration
     ports:
       - "8002:8002"
-    volumes:
-      - ./integration:/app
+  #  volumes:
+  #    - ./integration:/app
     environment:
       - MONGODB_URI=mongodb://mongodb:27017/lbaas
       - REDIS_URI=redis://redis:6379/0
