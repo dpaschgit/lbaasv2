@@ -1,11 +1,13 @@
 """
-LBaaS API - Windows Compatible Main File
-This file includes internal dependency installation and Windows-compatible path handling
+LBaaS API - Windows Compatible Main File with Enhanced OpenAPI Debug
+This file includes internal dependency installation, Windows-compatible path handling,
+and detailed debugging for OpenAPI specification loading
 """
 import sys
 import os
 import subprocess
 import platform
+import traceback
 
 # Function to ensure dependencies are installed
 def ensure_dependencies():
@@ -50,10 +52,11 @@ if not ensure_dependencies():
     sys.exit(1)
 
 # Now import the required packages
-from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi import FastAPI, Depends, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 import uvicorn
 import json
 from datetime import datetime, timedelta, timezone
@@ -64,9 +67,9 @@ from pydantic import BaseModel
 import yaml
 
 # --- JWT Authentication Configuration ---
-SECRET_KEY = "your-secret-key-for-jwt"  # Replace with a strong, random key in production
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "your-secret-key-for-jwt")
+ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -186,22 +189,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-# from controllers.vip_controller import router as vip_router
-# from controllers.entitlement_controller import router as entitlement_router
-# from controllers.transformer_controller import router as transformer_router
-# from controllers.promotion_controller import router as promotion_router
-# from controllers.bluecat_controller import router as bluecat_router
-# from controllers.ansible_controller import router as ansible_router
-# from controllers.mock_controller import router as mock_router
-# app.include_router(vip_router, prefix="/api/v1/vips", tags=["VIPs"])
-# app.include_router(entitlement_router, prefix="/api/v1/entitlements", tags=["Entitlements"])
-# app.include_router(transformer_router, prefix="/api/v1/transformers", tags=["Transformers"])
-# app.include_router(promotion_router, prefix="/api/v1/promotion", tags=["Promotion"])
-# app.include_router(bluecat_router, prefix="/api/v1/bluecat", tags=["Bluecat DDI"])
-# app.include_router(ansible_router, prefix="/api/v1/ansible", tags=["Ansible"])
-# app.include_router(mock_router, prefix="/api/v1/mock", tags=["Mock Services"])
-
 # --- Authentication Endpoints ---
 @app.post("/api/v1/auth/token", tags=["Authentication"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -232,10 +219,109 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
+# --- OpenAPI Debug Endpoint ---
+@app.get("/debug/openapi", tags=["Debug"])
+async def debug_openapi():
+    """Debug endpoint to check OpenAPI specification loading"""
+    debug_info = {
+        "platform": platform.system(),
+        "python_version": platform.python_version(),
+        "current_directory": os.path.abspath(os.curdir),
+        "openapi_paths_checked": [],
+        "openapi_file_found": False,
+        "openapi_file_path": None,
+        "openapi_file_size": None,
+        "openapi_load_success": False,
+        "openapi_error": None,
+        "environment_variables": {
+            "OPENAPI_PATH": os.environ.get("OPENAPI_PATH", "Not set")
+        }
+    }
+    
+    # Get the current directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Try multiple possible locations for the OpenAPI spec
+    possible_paths = [
+        # Environment variable path
+        os.environ.get("OPENAPI_PATH"),
+        # Windows path with D: drive
+        os.path.join("D:", os.sep, "MyCode", "lbaasv2", "docs", "enhanced_openapi_with_auth.yaml"),
+        # Relative path from current directory
+        os.path.join(current_dir, "docs", "enhanced_openapi_with_auth.yaml"),
+        # One level up from current directory
+        os.path.join(current_dir, "..", "docs", "enhanced_openapi_with_auth.yaml"),
+        # Current directory
+        os.path.join(current_dir, "enhanced_openapi_with_auth.yaml"),
+        # Docker volume mount path
+        "/app/docs/enhanced_openapi_with_auth.yaml",
+    ]
+    
+    # Filter out None values
+    possible_paths = [p for p in possible_paths if p]
+    
+    # Try each path
+    for openapi_path in possible_paths:
+        path_info = {
+            "path": openapi_path,
+            "exists": os.path.exists(openapi_path),
+            "is_file": os.path.isfile(openapi_path) if os.path.exists(openapi_path) else False,
+            "size": os.path.getsize(openapi_path) if os.path.exists(openapi_path) and os.path.isfile(openapi_path) else None,
+            "readable": os.access(openapi_path, os.R_OK) if os.path.exists(openapi_path) else False
+        }
+        debug_info["openapi_paths_checked"].append(path_info)
+        
+        if path_info["exists"] and path_info["is_file"] and path_info["readable"]:
+            debug_info["openapi_file_found"] = True
+            debug_info["openapi_file_path"] = openapi_path
+            debug_info["openapi_file_size"] = path_info["size"]
+            
+            try:
+                with open(openapi_path, "r") as f:
+                    content = f.read()
+                    yaml_content = yaml.safe_load(content)
+                    debug_info["openapi_load_success"] = True
+                    debug_info["openapi_content_preview"] = {
+                        "info": yaml_content.get("info", {}),
+                        "paths_count": len(yaml_content.get("paths", {})),
+                        "components_count": len(yaml_content.get("components", {}))
+                    }
+                    break
+            except Exception as e:
+                debug_info["openapi_error"] = {
+                    "message": str(e),
+                    "traceback": traceback.format_exc()
+                }
+    
+    return debug_info
+
+# --- Metrics Endpoint for Prometheus ---
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """Simple metrics endpoint for Prometheus monitoring"""
+    # This is a basic implementation - in a real app, you'd use a proper metrics library
+    return {
+        "api_status": "healthy",
+        "uptime_seconds": 0,  # You'd calculate this from app start time
+        "request_count": 0,   # You'd increment this for each request
+        "error_count": 0      # You'd increment this for each error
+    }
+
 # --- Custom OpenAPI Schema ---
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+    
+    # Check for environment variable first
+    openapi_path = os.environ.get("OPENAPI_PATH")
+    if openapi_path and os.path.exists(openapi_path):
+        try:
+            with open(openapi_path, "r") as f:
+                app.openapi_schema = yaml.safe_load(f)
+                print(f"Loaded custom OpenAPI schema from environment variable path: {openapi_path}")
+                return app.openapi_schema
+        except Exception as e:
+            print(f"Error loading custom OpenAPI schema from environment variable path: {e}")
     
     # Get the current directory
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -250,6 +336,8 @@ def custom_openapi():
         os.path.join(current_dir, "..", "docs", "enhanced_openapi_with_auth.yaml"),
         # Current directory
         os.path.join(current_dir, "enhanced_openapi_with_auth.yaml"),
+        # Docker volume mount path
+        "/app/docs/enhanced_openapi_with_auth.yaml",
     ]
     
     # Try each path
@@ -257,11 +345,14 @@ def custom_openapi():
         if os.path.exists(openapi_path):
             try:
                 with open(openapi_path, "r") as f:
-                    app.openapi_schema = yaml.safe_load(f)
+                    content = f.read()
+                    app.openapi_schema = yaml.safe_load(content)
                     print(f"Loaded custom OpenAPI schema from {openapi_path}")
+                    print(f"Schema info: {app.openapi_schema.get('info', {}).get('title')}")
                     return app.openapi_schema
             except Exception as e:
                 print(f"Error loading custom OpenAPI schema from {openapi_path}: {e}")
+                print(traceback.format_exc())
     
     # If we get here, none of the paths worked
     print("OpenAPI schema file not found. Checked paths:")
@@ -279,10 +370,31 @@ def custom_openapi():
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
+# Override the default OpenAPI schema with our custom one
 app.openapi = custom_openapi
+
+# --- Error handling middleware ---
+@app.middleware("http")
+async def add_error_handling(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        print(f"Error handling request {request.url}: {e}")
+        print(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)},
+        )
 
 if __name__ == "__main__":
     print(f"Starting LBaaS API on platform: {platform.system()}")
     print(f"Python version: {platform.python_version()}")
     print(f"Current directory: {os.path.abspath(os.curdir)}")
+    
+    # Print environment variables
+    print("Environment variables:")
+    for key, value in os.environ.items():
+        if key.startswith("OPENAPI") or key.startswith("JWT"):
+            print(f"  {key}: {value}")
+    
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,248 +1,202 @@
-version: '3'
+version: '3.8'
 
 services:
-  # API Service
   api:
     build:
       context: ./docker/api
       dockerfile: Dockerfile
+    image: lbaasv2-api
     container_name: lbaas-api
+    volumes:
+      - D:/MyCode/lbaasv2/api:/app
+      - D:/MyCode/lbaasv2/docs:/app/docs
     ports:
       - "8000:8000"
-#    volumes:
-#      - ./api:/app
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017/lbaas
-      - REDIS_URI=redis://redis:6379/0
-      - LOG_LEVEL=INFO
-      - ENVIRONMENT=development
-    depends_on:
-      - mongodb
-      - redis
-    networks:
-      - lbaas-network
-    restart: unless-stopped
+      - PYTHONPATH=/app
+      - OPENAPI_PATH=/app/docs/enhanced_openapi_with_auth.yaml
+      - JWT_SECRET_KEY=your-secret-key-for-jwt
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
-
-  # Business Service
-  business:
-    build:
-      context: ./docker/business
-      dockerfile: Dockerfile
-    container_name: lbaas-business
-    ports:
-      - "8001:8001"
- #   volumes:
- #     - ./business:/app
-    environment:
-      - MONGODB_URI=mongodb://mongodb:27017/lbaas
-      - REDIS_URI=redis://redis:6379/0
-      - LOG_LEVEL=INFO
-      - ENVIRONMENT=development
+      start_period: 30s
     depends_on:
       - mongodb
       - redis
     networks:
       - lbaas-network
-    restart: unless-stopped
+
+  business:
+    build:
+      context: ./docker/business
+      dockerfile: Dockerfile
+    image: lbaasv2-business
+    container_name: lbaas-business
+    volumes:
+      - D:/MyCode/lbaasv2/business:/app
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONPATH=/app
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    networks:
+      - lbaas-network
 
-  # Integration Service
   integration:
     build:
       context: ./docker/integration
       dockerfile: Dockerfile
+    image: lbaasv2-integration
     container_name: lbaas-integration
+    volumes:
+      - D:/MyCode/lbaasv2/integration:/app
     ports:
       - "8002:8002"
-  #  volumes:
-  #    - ./integration:/app
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017/lbaas
-      - REDIS_URI=redis://redis:6379/0
-      - LOG_LEVEL=INFO
-      - ENVIRONMENT=development
-      - SERVICENOW_URL=http://mock-servicenow:8010
-      - BLUECAT_URL=http://mock-bluecat:8011
-      - CERT_AUTHORITY_URL=http://mock-cert:8012
-    depends_on:
-      - mongodb
-      - redis
-      - mock-servicenow
-      - mock-bluecat
-      - mock-cert
-    networks:
-      - lbaas-network
-    restart: unless-stopped
+      - PYTHONPATH=/app
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
-
-  # Mock ServiceNow CMDB
-  mock-servicenow:
-    build:
-      context: ./docker/mock
-      dockerfile: Dockerfile
-    container_name: lbaas-mock-servicenow
-    ports:
-      - "8010:8010"
-    volumes:
-      - ./docker/mock/servicenow:/app
-    environment:
-      - PORT=8010
-      - LOG_LEVEL=INFO
+      start_period: 30s
     networks:
       - lbaas-network
-    restart: unless-stopped
-    command: ["python", "api.py"]
 
-  # Mock Bluecat DDI
-  mock-bluecat:
-    build:
-      context: ./docker/mock
-      dockerfile: Dockerfile
-    container_name: lbaas-mock-bluecat
-    ports:
-      - "8011:8011"
-    volumes:
-      - ./docker/mock/bluecat:/app
-    environment:
-      - PORT=8011
-      - LOG_LEVEL=INFO
-    networks:
-      - lbaas-network
-    restart: unless-stopped
-    command: ["python", "api.py"]
-
-  # Mock Certificate Authority
-  mock-cert:
-    build:
-      context: ./docker/mock
-      dockerfile: Dockerfile
-    container_name: lbaas-mock-cert
-    ports:
-      - "8012:8012"
-    volumes:
-      - ./docker/mock/cert:/app
-    environment:
-      - PORT=8012
-      - LOG_LEVEL=INFO
-    networks:
-      - lbaas-network
-    restart: unless-stopped
-    command: ["python", "api.py"]
-
-  # Ansible Service
-  ansible:
-    build:
-      context: ./docker/ansible
-      dockerfile: Dockerfile
-    container_name: lbaas-ansible
-    volumes:
-      - ./ansible:/ansible
-    environment:
-      - ANSIBLE_HOST_KEY_CHECKING=False
-    networks:
-      - lbaas-network
-    restart: unless-stopped
-
-  # MongoDB
   mongodb:
     image: mongo:6.0
     container_name: lbaas-mongodb
     ports:
       - "27017:27017"
     volumes:
-      - mongodb-data:/data/db
-    environment:
-      - MONGO_INITDB_DATABASE=lbaas
-    networks:
-      - lbaas-network
-    restart: unless-stopped
+      - mongodb_data:/data/db
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/lbaas --quiet
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    networks:
+      - lbaas-network
 
-  # Redis
   redis:
     image: redis:7.0
     container_name: lbaas-redis
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
-    networks:
-      - lbaas-network
-    restart: unless-stopped
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    networks:
+      - lbaas-network
 
-  # Prometheus
   prometheus:
     build:
       context: ./docker/monitoring
       dockerfile: Dockerfile
+    image: lbaasv2-prometheus
     container_name: lbaas-prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus-data:/prometheus
+      - D:/MyCode/lbaasv2/docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
     networks:
       - lbaas-network
-    restart: unless-stopped
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
 
-  # Grafana
   grafana:
     image: grafana/grafana:9.5.2
     container_name: lbaas-grafana
     ports:
       - "3000:3000"
     volumes:
-      - ./docker/monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./docker/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
-      - grafana-data:/var/lib/grafana
+      - D:/MyCode/lbaasv2/docker/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/system_dashboard.json
     networks:
       - lbaas-network
-    restart: unless-stopped
-    depends_on:
-      - prometheus
 
-volumes:
-  mongodb-data:
-  redis-data:
-  prometheus-data:
-  grafana-data:
+  mock-servicenow:
+    build:
+      context: ./docker/mock
+      dockerfile: Dockerfile
+    image: lbaasv2-mock-servicenow
+    container_name: lbaas-mock-servicenow
+    ports:
+      - "8010:8010"
+    environment:
+      - MOCK_SERVICE=servicenow
+      - PORT=8010
+    networks:
+      - lbaas-network
+
+  mock-bluecat:
+    build:
+      context: ./docker/mock
+      dockerfile: Dockerfile
+    image: lbaasv2-mock-bluecat
+    container_name: lbaas-mock-bluecat
+    ports:
+      - "8011:8011"
+    environment:
+      - MOCK_SERVICE=bluecat
+      - PORT=8011
+    networks:
+      - lbaas-network
+
+  mock-cert:
+    build:
+      context: ./docker/mock
+      dockerfile: Dockerfile
+    image: lbaasv2-mock-cert
+    container_name: lbaas-mock-cert
+    ports:
+      - "8012:8012"
+    environment:
+      - MOCK_SERVICE=cert
+      - PORT=8012
+    networks:
+      - lbaas-network
+
+  ansible:
+    build:
+      context: ./docker/ansible
+      dockerfile: Dockerfile
+    image: lbaasv2-ansible
+    container_name: lbaas-ansible
+    volumes:
+      - D:/MyCode/lbaasv2/ansible:/ansible
+    command: sleep infinity
+    networks:
+      - lbaas-network
 
 networks:
   lbaas-network:
     driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
